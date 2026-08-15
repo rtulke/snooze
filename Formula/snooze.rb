@@ -1,8 +1,8 @@
 class Snooze < Formula
   desc "Temporarily mute Zabbix hosts and hostgroups"
   homepage "https://github.com/rtulke/snooze"
-  url "https://github.com/rtulke/snooze/archive/refs/tags/v2.1.tar.gz"
-  sha256 "298bea695434937419f44720ffe730379917b4f92c3843e36ff90df6572329ce"
+  url "https://github.com/rtulke/snooze/archive/refs/tags/v2.2.tar.gz"
+  sha256 "e6ed5a0c1cbfdaaca4a94cd6ffc79eebcfbec6fde00ae9bc94405e3060218e4e"
   license "GPL-3.0-or-later"
   head "https://github.com/rtulke/snooze.git", branch: "main"
 
@@ -32,6 +32,11 @@ class Snooze < Formula
       See `man snooze` or `snooze --help` for all commands, and the full
       documentation at https://github.com/rtulke/snooze#readme (German at
       https://github.com/rtulke/snooze/blob/main/README_de.md).
+
+      Note: homebrew-core ships an unrelated tool of the same name (a cron
+      replacement). Core wins over a tap for a bare formula name, so always
+      install and upgrade this one as rtulke/snooze/snooze. Both provide a
+      `snooze` binary and cannot be linked at the same time.
     EOS
   end
 
