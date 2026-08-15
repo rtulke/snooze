@@ -1,0 +1,149 @@
+name: Release
+
+# build+verify run on every push/PR to main so packaging breakage is caught
+# early; the release job only fires on an actual "vX.Y.Z" tag push.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Unlike this project's other packaging pipelines (see rtulke/cryptc),
+    # snooze has no compiled/native dependency, so there's no per-distro
+    # SONAME skew to build around: a single 'all'-architecture .deb is built
+    # once here; the verify job below installs that same package into each
+    # target distro to prove it actually works everywhere, rather than
+    # building it separately per distro.
+    runs-on: ubuntu-latest
+    container: debian:12-slim
+    steps:
+      # actions/checkout shells out to git, which isn't present in the bare
+      # distro image used as the build container - install it (and the
+      # packaging toolchain) before checking out.
+      - name: Install build prerequisites
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            git dpkg-dev debhelper python3
+
+      - uses: actions/checkout@v7
+
+      - name: Build .deb
+        run: packaging/build-deb.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb-package
+          path: dist/snooze_*_all.deb
+          if-no-files-found: error
+
+  verify:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: debian12
+            image: debian:12-slim
+          - id: debian13
+            image: debian:13-slim
+          - id: ubuntu2404
+            image: ubuntu:24.04
+          - id: ubuntu2604
+            image: ubuntu:26.04
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: deb-package
+
+      # A real `apt-get install`, not `dpkg -i`, so the declared python3
+      # Depends: actually has to resolve against this distro's archive.
+      # Functional smoke test beyond "did dpkg accept it": help/version
+      # actually run, the man page is registered, and postinst correctly
+      # seeded /etc/snooze.conf from the shipped example.
+      - name: Install and smoke-test the package the same way an end user would
+        run: |
+          docker run --rm \
+            -v "$PWD:/work:ro" \
+            ${{ matrix.image }} \
+            bash -euxc '
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /work/snooze_*_all.deb
+
+              snooze --help   >/dev/null
+              snooze --version
+              # Check via the package manifest, not the filesystem: Debian
+              # slim images (see /etc/dpkg/dpkg.cfg.d/docker) path-exclude
+              # /usr/share/man/* and /usr/share/doc/* for every package, so
+              # the file legitimately is not on disk there even though the
+              # package correctly ships and declares it - dpkg -L reflects
+              # what the package installed, independent of that image-level
+              # stripping policy.
+              dpkg -L snooze | grep -qx /usr/share/man/man1/snooze.1.gz
+              test -e /etc/snooze.conf.example
+              test -e /etc/snooze.conf
+
+              echo "OK: install + help/version + man page + config seeding all worked"
+            '
+
+  release:
+    needs: verify
+    # Tag pushes (vX.Y.Z) publish a proper, stable release. Pushes to main
+    # additionally republish a single rolling "latest" prerelease so a
+    # built .deb is always available between tagged versions - see the
+    # "Determine release identity" step for how the two are told apart.
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: deb-package
+          path: artifacts
+
+      - name: Determine release identity
+        id: rel
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "title=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "notes=snooze $GITHUB_REF_NAME - single all-architecture .deb (Debian 12/13, Ubuntu 24.04/26.04 all verified), see SHA256SUMS" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            echo "title=snooze (main, rolling build)" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "notes=Rolling build of main@${GITHUB_SHA::7} - not a stable release, see the tagged vX.Y.Z releases for that." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd artifacts
+          sha256sum *.deb > SHA256SUMS
+          TAG="${{ steps.rel.outputs.tag }}"
+          PRERELEASE_FLAG=""
+          [[ "${{ steps.rel.outputs.prerelease }}" == "true" ]] && PRERELEASE_FLAG="--prerelease"
+          # "latest" is a moving target: delete the previous release+tag first
+          # so the tag actually advances to this commit instead of staying
+          # pinned to whichever commit first created it. Tagged vX.Y.Z
+          # releases are never deleted here - only re-uploaded via the
+          # `gh release upload --clobber` fallback below on a re-run.
+          if [[ "$TAG" == "latest" ]]; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "${{ steps.rel.outputs.title }}" \
+            --notes "${{ steps.rel.outputs.notes }}" \
+            $PRERELEASE_FLAG \
+            * \
+          || gh release upload "$TAG" * \
+            --repo "$GITHUB_REPOSITORY" --clobber

@@ -1,0 +1,54 @@
+# snooze configuration — example/reference
+#
+# Pure documentation/template, contains no real secret. Kept up to date on
+# every Ansible run (no force: false, unlike /etc/snooze.conf itself, which
+# is deployed once and never overwritten afterward — local changes including
+# the token survive there).
+#
+# Lookup order (first readable file wins):
+#   ./snooze.conf
+#   ~/.snooze.conf
+#   /etc/snooze.conf
+#
+# Individual values can additionally be overridden via environment variable:
+#   SNOOZE_URL / ZABBIX_URL, SNOOZE_TOKEN / ZABBIX_TOKEN, SNOOZE_DOMAIN,
+#   SNOOZE_DURATION, SNOOZE_PREFIX, SNOOZE_TIMEOUT, SNOOZE_REASON,
+#   SNOOZE_CONFIRM_THRESHOLD, SNOOZE_RETRIES, SNOOZE_LANG
+# (ZABBIX_TOKEN/ZABBIX_URL are vault-/secrets-friendly.)
+
+[snooze]
+# Endpoint of the Zabbix JSON-RPC API
+url = https://zabbix.domain.tld/api_jsonrpc.php
+
+# API token (Bearer). Deliberately empty here — inject via
+# SNOOZE_TOKEN/ZABBIX_TOKEN (e.g. via Ansible Vault down the line, see the
+# TODO in /etc/snooze.conf). Only fill in if you're aware this file then
+# needs to be treated like /etc/snooze.conf: 0640, root:root, read-only for
+# admin_users via ACL.
+token =
+
+# Domain appended to hostnames without a dot.
+# Example: myhost1 becomes myhost1.domain.tld, so snooze <shortname> works
+# without an fqdn.
+domain = domain.tld
+
+# Default snooze duration when none is given (m/min = minutes, M = month)
+duration = 3h
+
+# Name prefix of the maintenance windows managed by snooze, shown in Zabbix
+prefix = snooze:
+
+# Timeout for API calls (seconds) and number of retries on network errors
+timeout = 15
+retries = 2
+
+# Reason/comment per maintenance window. Placeholders {user} and {host} are
+# substituted at runtime. Overridable via --reason.
+reason = {user}@{host}
+
+# How many targets before confirming a mute/wake is asked (-Y skips it)
+confirm_threshold = 10
+
+# Output language: 'de' or 'en'. Empty (default) = auto-detect from the
+# system locale (LC_ALL/LC_MESSAGES/LANG).
+lang =

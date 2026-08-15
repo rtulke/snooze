@@ -1,0 +1,53 @@
+# snooze-Konfiguration — Beispiel/Referenz
+#
+# Reine Dokumentation/Vorlage, kein echtes Secret enthalten. Wird bei jedem
+# Ansible-Lauf aktuell gehalten (kein force: false, im Unterschied zu
+# /etc/snooze.conf selbst, das einmalig ausgerollt und danach nicht mehr
+# überschrieben wird — lokale Anpassungen inkl. Token bleiben dort erhalten).
+#
+# Ablageorte (erste lesbare Datei gewinnt):
+#   ./snooze.conf
+#   ~/.snooze.conf
+#   /etc/snooze.conf
+#
+# Einzelne Werte lassen sich zusätzlich per Umgebungsvariable überschreiben:
+#   SNOOZE_URL / ZABBIX_URL, SNOOZE_TOKEN / ZABBIX_TOKEN, SNOOZE_DOMAIN,
+#   SNOOZE_DURATION, SNOOZE_PREFIX, SNOOZE_TIMEOUT, SNOOZE_REASON,
+#   SNOOZE_CONFIRM_THRESHOLD, SNOOZE_RETRIES, SNOOZE_LANG
+# (ZABBIX_TOKEN/ZABBIX_URL sind Vault-/Secrets-freundlich.)
+
+[snooze]
+# Endpunkt der Zabbix-JSON-RPC-API
+url = https://zabbix.domain.tld/api_jsonrpc.php
+
+# API-Token (Bearer). Hier bewusst leer — per SNOOZE_TOKEN/ZABBIX_TOKEN
+# injizieren (z. B. künftig via Ansible Vault, siehe TODO in /etc/snooze.conf).
+# Nur eintragen, wenn dir bewusst ist, dass diese Datei dann wie /etc/snooze.conf
+# behandelt werden muss: 0640, root:root, Lesen nur für admin_users per ACL.
+token =
+
+# Domain, die an Hostnamen ohne Punkt angehängt wird
+# Bsp.: meinhost1 wird meinhost1.domain.tld, damit ist snooze <shortname> ohne
+# fqdn möglich
+domain = domain.tld
+
+# Standard-Snooze-Dauer, wenn keine angegeben ist (m/min = Minuten, M = Monat)
+duration = 3h
+
+# Namenspräfix der von snooze verwalteten Wartungsfenster, erscheint im zabbix
+prefix = snooze:
+
+# Timeout für API-Aufrufe (Sekunden) und Anzahl Wiederholungen bei Netzfehlern
+timeout = 15
+retries = 2
+
+# Grund/Kommentar je Wartungsfenster. Platzhalter {user} und {host} werden
+# zur Laufzeit ersetzt. Per --reason überschreibbar.
+reason = {user}@{host}
+
+# Ab wie vielen Zielen vor dem Muten/Wecken nachgefragt wird (-Y überspringt)
+confirm_threshold = 10
+
+# Sprache der Ausgaben: 'de' oder 'en'. Leer (Standard) = automatisch anhand
+# der System-Locale (LC_ALL/LC_MESSAGES/LANG) erkennen.
+lang =

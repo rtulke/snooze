@@ -1,0 +1,100 @@
+# bash completion for the snooze admin script
+#
+# Static completion (subcommands, list args, durations) is instant.
+# Host/group names are pulled from Zabbix via `snooze list …` and cached
+# under $XDG_CACHE_HOME/snooze for a short TTL so that <Tab> stays responsive.
+# Group names containing spaces/slashes only complete up to the first word —
+# quote them as the help text describes (e.g. snooze 1d "@Servers/Linux").
+
+_snooze_cache_ttl=300
+
+_snooze_cached() {
+    local kind="$1"
+    local dir="${XDG_CACHE_HOME:-$HOME/.cache}/snooze"
+    local f="$dir/$kind"
+    local now age
+    mkdir -p "$dir" 2>/dev/null || return
+    now=$(date +%s)
+    age=$_snooze_cache_ttl
+    [[ -f "$f" ]] && age=$(( now - $(stat -c %Y "$f" 2>/dev/null || echo 0) ))
+    if [[ ! -f "$f" || $age -ge $_snooze_cache_ttl ]]; then
+        if [[ "$kind" == hosts ]]; then
+            # `list hosts` prints "host  (visible name)" — keep the first column.
+            snooze list hosts 2>/dev/null | awk 'NF{print $1}' > "$f" 2>/dev/null
+        else
+            # `list groups` prints one full group name per line.
+            snooze list groups 2>/dev/null > "$f" 2>/dev/null
+        fi
+    fi
+    cat "$f" 2>/dev/null
+}
+
+_snooze() {
+    local cur cword
+    if declare -F _init_completion >/dev/null 2>&1; then
+        _init_completion || return
+    else
+        COMPREPLY=()
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        cword=$COMP_CWORD
+    fi
+
+    local subcommands="mute plan unmute extend list status cleanup prune help version"
+    local top_flags="-h --help -V --version"
+    local durations="30m 30min 1h 3h 4h 12h 1d 2d 1w 1M"
+    local options="-Y --yes -F --file --reason"
+    local cmd="${COMP_WORDS[1]}"
+
+    # First word: a subcommand, a top-level flag (-h/--help/-V/--version -
+    # only meaningful as literally the first token, see main()'s dispatch),
+    # a regular option, or a bare duration (implicit mute).
+    if [[ $cword -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "$subcommands $top_flags $options $durations" -- "$cur") )
+        return
+    fi
+
+    # Complete regular options anywhere after that.
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "$options" -- "$cur") )
+        return
+    fi
+
+    # Right after -F/--file: fall back to filename completion.
+    local prev="${COMP_WORDS[COMP_CWORD-1]}"
+    if [[ "$prev" == "-F" || "$prev" == "--file" ]]; then
+        COMPREPLY=( $(compgen -f -- "$cur") )
+        return
+    fi
+
+    case "$cmd" in
+        list)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "hosts groups active plans suppressed" -- "$cur") )
+                return
+            fi
+            # Only 'list suppressed' takes targets — fall through below into
+            # the generic host/group completion for that case.
+            [[ "${COMP_WORDS[2]}" != "suppressed" ]] && return
+            ;;
+        status|cleanup|prune|help|-h|--help|version|-V|--version)
+            return
+            ;;
+        plan)
+            # TIME/DURATION tokens aren't host/group names -> no suggestions.
+            return
+            ;;
+    esac
+
+    # Target position (mute / unmute / extend / implicit mute): @group or host.
+    if [[ "$cur" == @* ]]; then
+        local IFS=$'\n'
+        COMPREPLY=( $(compgen -P "@" -W "$(_snooze_cached groups)" -- "${cur#@}") )
+        return
+    fi
+
+    # Right after an explicit "mute"/"extend" the next word may be the duration.
+    local extra=""
+    [[ ( "$cmd" == "mute" || "$cmd" == "extend" ) && $cword -eq 2 ]] && extra="$durations"
+    COMPREPLY=( $(compgen -W "$(_snooze_cached hosts) $extra" -- "$cur") )
+}
+complete -F _snooze snooze

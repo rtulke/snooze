@@ -1,0 +1,95 @@
+---
+- name: Deploy admin scripts
+  when: ansible_facts.hostname in admin_hosts
+  block:
+    - name: Install runtime dependencies
+      ansible.builtin.apt:
+        name:
+          - acl      # setfacl, needed by ansible.posix.acl
+          - fping    # needed by list_clients
+        state: present
+
+    - name: Copy sbin scripts (root only by default)
+      ansible.builtin.copy:
+        src: "usr/local/sbin/{{ item }}"
+        dest: "/usr/local/sbin/{{ item }}"
+        owner: root
+        group: root
+        mode: "0750"
+      loop: "{{ admin_scripts }}"
+
+    - name: Allow specific users to execute the scripts (ACL)
+      ansible.posix.acl:
+        path: "/usr/local/sbin/{{ item.0 }}"
+        entity: "{{ item.1 }}"
+        etype: user
+        permissions: rx
+        state: present
+      loop: "{{ admin_scripts | product(admin_users) | list }}"
+
+    - name: Deploy fetchssh config reference (always current)
+      ansible.builtin.copy:
+        src: "etc/fetchssh.conf.example"
+        dest: "/etc/fetchssh.conf.example"
+        owner: root
+        group: root
+        mode: "0644"
+      when: "'fetchssh' in admin_scripts"
+
+    - name: Seed fetchssh config (created once, then operator-editable)
+      ansible.builtin.copy:
+        src: "etc/fetchssh.conf"
+        dest: "/etc/fetchssh.conf"
+        owner: root
+        group: root
+        mode: "0640"
+        force: false      # don't overwrite, local changes survive
+      when: "'fetchssh' in admin_scripts"
+
+    - name: Allow specific users to read the fetchssh config (ACL)
+      ansible.posix.acl:
+        path: "/etc/fetchssh.conf"
+        entity: "{{ item }}"
+        etype: user
+        permissions: r
+        state: present
+      loop: "{{ admin_users }}"
+      when: "'fetchssh' in admin_scripts"
+
+    - name: Deploy snooze config reference (always current)
+      ansible.builtin.copy:
+        src: "etc/snooze.conf.example"
+        dest: "/etc/snooze.conf.example"
+        owner: root
+        group: root
+        mode: "0644"
+      when: "'snooze' in admin_scripts"
+
+    - name: Seed snooze config (created once, then operator-editable)
+      ansible.builtin.copy:
+        src: "etc/snooze.conf"
+        dest: "/etc/snooze.conf"
+        owner: root
+        group: root
+        mode: "0640"
+        force: false      # don't overwrite, local changes survive
+      when: "'snooze' in admin_scripts"
+
+    - name: Allow specific users to read the snooze config (ACL)
+      ansible.posix.acl:
+        path: "/etc/snooze.conf"
+        entity: "{{ item }}"
+        etype: user
+        permissions: r
+        state: present
+      loop: "{{ admin_users }}"
+      when: "'snooze' in admin_scripts"
+
+    - name: Install bash completions
+      ansible.builtin.copy:
+        src: "etc/bash_completion.d/{{ item }}"
+        dest: "/etc/bash_completion.d/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ admin_completions }}"

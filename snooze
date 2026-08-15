@@ -1,0 +1,1229 @@
+#!/usr/bin/env python3
+"""snooze — temporarily mute Zabbix hosts and hostgroups via Maintenance mode."""
+
+import configparser
+import fnmatch
+import getpass
+import json
+import os
+import re
+import socket
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime
+
+VERSION = "2.2"
+AUTHOR = "Robert Tulke, rt@ttyS0.sh"
+
+## Language
+#
+# Two languages: German (de) and English (en, default). German only for a
+# German system locale (de, de_DE, de_CH, de_AT, de_LI, de_LU, …) — checked
+# in the POSIX-standard priority LC_ALL > LC_MESSAGES > LANG. Without a
+# recognizable/set locale (or any other language), English applies.
+# All translations live in MSG; tr() looks up the current language.
+# (Not named 't' — that would collide with the loop variable 't' in
+# expand_host_patterns()/split_targets().)
+
+
+def detect_lang() -> str:
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        val = os.environ.get(var, "").strip()
+        if val:
+            return "de" if val[:2].lower() == "de" else "en"
+    return "en"
+
+
+LANG = detect_lang()
+
+MSG = {
+    "cfg_unreadable": {
+        "de": "Config {path} unlesbar: {exc}",
+        "en": "Config {path} unreadable: {exc}",
+    },
+    "bad_duration": {
+        "de": "Ungültige Dauer {s!r}. Format: 30m/30min, 4h, 2d, 1w, 1M (M=Monat)",
+        "en": "Invalid duration {s!r}. Format: 30m/30min, 4h, 2d, 1w, 1M (M=month)",
+    },
+    "bad_when_value": {
+        "de": "Ungültiger Zeitpunkt {s!r}: {exc}",
+        "en": "Invalid time {s!r}: {exc}",
+    },
+    "when_past": {
+        "de": "Zeitpunkt {s!r} liegt in der Vergangenheit.",
+        "en": "Time {s!r} is in the past.",
+    },
+    "time_already_past_today": {
+        "de": "Uhrzeit {s!r} liegt heute bereits in der Vergangenheit — Datum ergänzen, "
+              "z. B. '{example}'.",
+        "en": "Time {s!r} has already passed today — add a date, e.g. '{example}'.",
+    },
+    "bad_when_format": {
+        "de": "Ungültiger Zeitpunkt {s!r}. Format: 'HH:MM' oder 'TT.MM.JJJJ HH:MM'",
+        "en": "Invalid time {s!r}. Format: 'HH:MM' or 'DD.MM.YYYY HH:MM'",
+    },
+    "plan_need_time": {
+        "de": "plan: bitte einen Zeitpunkt angeben, z. B. '14:00' oder '22.5.2026 14:00'.",
+        "en": "plan: please provide a time, e.g. '14:00' or '22.5.2026 14:00'.",
+    },
+    "plan_need_time_after_date": {
+        "de": "plan: nach dem Datum {date!r} wird eine Uhrzeit erwartet, z. B. '{date} 14:00'.",
+        "en": "plan: expected a time after the date {date!r}, e.g. '{date} 14:00'.",
+    },
+    "plan_bad_time": {
+        "de": "plan: ungültiger Zeitpunkt {s!r}. Format: 'HH:MM' oder 'TT.MM.JJJJ HH:MM'.",
+        "en": "plan: invalid time {s!r}. Format: 'HH:MM' or 'DD.MM.YYYY HH:MM'.",
+    },
+    "no_local_hostname": {
+        "de": "Lokaler Hostname nicht ermittelbar — Ziel explizit angeben.",
+        "en": "Could not determine local hostname — specify a target explicitly.",
+    },
+    "bad_regex": {
+        "de": "Ungültige Regex {pat!r}: {exc}",
+        "en": "Invalid regex {pat!r}: {exc}",
+    },
+    "zbx_unreachable": {
+        "de": "Zabbix nicht erreichbar: {exc}",
+        "en": "Zabbix unreachable: {exc}",
+    },
+    "zbx_api_error": {
+        "de": "Zabbix-API: {msg} — {data}",
+        "en": "Zabbix API: {msg} — {data}",
+    },
+    "no_hosts_found": {
+        "de": "Keine Hosts in Zabbix gefunden.",
+        "en": "No hosts found in Zabbix.",
+    },
+    "no_groups_found": {
+        "de": "Keine Hostgruppen in Zabbix gefunden.",
+        "en": "No hostgroups found in Zabbix.",
+    },
+    "lbl_ok": {"de": "OK", "en": "OK"},
+    "lbl_err": {"de": "FEHLER", "en": "ERROR"},
+    "not_in_zabbix": {
+        "de": "nicht in Zabbix gefunden",
+        "en": "not found in Zabbix",
+    },
+    "group_not_in_zabbix": {
+        "de": "Hostgruppe nicht in Zabbix gefunden",
+        "en": "hostgroup not found in Zabbix",
+    },
+    "status_planned": {
+        "de": "geplant ab {since}, bis {end}",
+        "en": "planned from {since}, until {end}",
+    },
+    "status_muted": {
+        "de": "gemutet bis {end}",
+        "en": "muted until {end}",
+    },
+    "group_status": {
+        "de": "Hostgruppe {status}",
+        "en": "Hostgroup {status}",
+    },
+    "no_active_entry": {
+        "de": "kein aktiver snooze-Eintrag",
+        "en": "no active snooze entry",
+    },
+    "extended_until": {
+        "de": "verlängert bis {end}",
+        "en": "extended until {end}",
+    },
+    "woken": {
+        "de": "geweckt",
+        "en": "woken up",
+    },
+    "no_active_entries": {
+        "de": "Keine aktiven snooze-Einträge.",
+        "en": "No active snooze entries.",
+    },
+    "no_planned_entries": {
+        "de": "Keine geplanten snooze-Einträge.",
+        "en": "No planned snooze entries.",
+    },
+    "no_expired_entries": {
+        "de": "Keine abgelaufenen snooze-Einträge.",
+        "en": "No expired snooze entries.",
+    },
+    "cleanup_failed": {
+        "de": "Aufräumen fehlgeschlagen: {exc}",
+        "en": "Cleanup failed: {exc}",
+    },
+    "removed": {
+        "de": "entfernt",
+        "en": "removed",
+    },
+    "cleanup_summary": {
+        "de": "{count} abgelaufene(r) Eintrag/Einträge entfernt.",
+        "en": "{count} expired entry/entries removed.",
+    },
+    "word_until": {"de": "bis", "en": "until"},
+    "word_starts": {"de": "startet", "en": "starts"},
+    "word_since": {"de": "seit", "en": "since"},
+    "no_suppressed": {
+        "de": "keine unterdrückten Probleme",
+        "en": "no suppressed problems",
+    },
+    "file_unreadable": {
+        "de": "Datei {path!r} nicht lesbar: {exc}",
+        "en": "File {path!r} not readable: {exc}",
+    },
+    "confirm_need_yes": {
+        "de": "{count} Ziele (> {threshold}) — zum Bestätigen -Y/--yes angeben.",
+        "en": "{count} targets (> {threshold}) — pass -Y/--yes to confirm.",
+    },
+    "confirm_prompt": {
+        "de": "{count} Ziele betroffen — fortfahren? [j/N] ",
+        "en": "{count} targets affected — continue? [y/N] ",
+    },
+    "flag_need_filename": {
+        "de": "{flag} erwartet einen Dateinamen.",
+        "en": "{flag} requires a filename.",
+    },
+    "flag_need_text": {
+        "de": "--reason erwartet einen Text.",
+        "en": "--reason requires text.",
+    },
+    "no_pattern_match": {
+        "de": "kein Treffer für Muster",
+        "en": "no match for pattern",
+    },
+    "aborted": {
+        "de": "Abgebrochen.",
+        "en": "Aborted.",
+    },
+    "extend_need_duration": {
+        "de": "extend: bitte eine Dauer angeben, z. B. 'snooze extend 2h host1'.",
+        "en": "extend: please provide a duration, e.g. 'snooze extend 2h host1'.",
+    },
+    "list_need_subcmd": {
+        "de": "list: bitte 'hosts', 'groups', 'active', 'plans' oder 'suppressed' angeben.",
+        "en": "list: please specify 'hosts', 'groups', 'active', 'plans', or 'suppressed'.",
+    },
+    "no_token": {
+        "de": "Kein Token gesetzt — 'token' in /etc/snooze.conf oder SNOOZE_TOKEN setzen.",
+        "en": "No token set — set 'token' in /etc/snooze.conf or SNOOZE_TOKEN.",
+    },
+    "remaining": {"de": "noch {time}", "en": "{time} left"},
+    "expired": {"de": "abgelaufen", "en": "expired"},
+}
+
+
+def tr(key: str, **kwargs) -> str:
+    return MSG[key][LANG].format(**kwargs)
+
+
+def _print_ok(target: str, msg: str):
+    print(f"{tr('lbl_ok'):<8}{target}  {msg}")
+
+
+def _print_err(target: str, msg: str):
+    print(f"{tr('lbl_err'):<8}{target}  {msg}")
+
+
+## Configuration
+#
+# Settings come from an INI file ([snooze] section). The first readable file
+# from CONFIG_PATHS wins. Individual values can additionally be overridden
+# via environment variable (SNOOZE_URL, SNOOZE_TOKEN, …; ZABBIX_TOKEN/
+# ZABBIX_URL are also accepted for token and URL — vault-friendly).
+
+CONFIG_PATHS = [
+    "./snooze.conf",
+    os.path.expanduser("~/.snooze.conf"),
+    "/etc/snooze.conf",
+]
+
+DEFAULTS = {
+    "url": "https://zabbix.domain.tld/api_jsonrpc.php",
+    "token": "",
+    "domain": "domain.tld",
+    "duration": "3h",
+    "prefix": "snooze:",
+    "timeout": "15",
+    "reason": "{user}@{host}",
+    "confirm_threshold": "10",
+    "retries": "2",
+    "lang": "",
+}
+
+# Env var -> config key. Multiple aliases per key are possible.
+ENV_OVERRIDES = {
+    "url": ("SNOOZE_URL", "ZABBIX_URL"),
+    "token": ("SNOOZE_TOKEN", "ZABBIX_TOKEN"),
+    "domain": ("SNOOZE_DOMAIN",),
+    "duration": ("SNOOZE_DURATION",),
+    "prefix": ("SNOOZE_PREFIX",),
+    "timeout": ("SNOOZE_TIMEOUT",),
+    "reason": ("SNOOZE_REASON",),
+    "confirm_threshold": ("SNOOZE_CONFIRM_THRESHOLD",),
+    "retries": ("SNOOZE_RETRIES",),
+    "lang": ("SNOOZE_LANG",),
+}
+
+
+def load_config() -> dict:
+    """Reads defaults < first readable config file < environment variables."""
+    cfg = dict(DEFAULTS)
+    for path in CONFIG_PATHS:
+        if os.path.isfile(path):
+            parser = configparser.ConfigParser(interpolation=None)
+            try:
+                parser.read(path)
+            except configparser.Error as exc:
+                die(tr("cfg_unreadable", path=path, exc=exc))
+            if parser.has_section("snooze"):
+                for key in DEFAULTS:
+                    if parser.has_option("snooze", key):
+                        cfg[key] = parser.get("snooze", key)
+            break
+    for key, names in ENV_OVERRIDES.items():
+        for name in names:
+            if os.environ.get(name):
+                cfg[key] = os.environ[name]
+                break
+    return cfg
+
+
+def apply_lang_override(cfg: dict):
+    """Forces 'de'/'en' from config ('lang')/env (SNOOZE_LANG); empty = detect_lang() stands."""
+    global LANG, HELP
+    override = cfg.get("lang", "").strip().lower()
+    if override in ("de", "en"):
+        LANG = override
+        HELP = HELP_DE if LANG == "de" else HELP_EN
+
+
+## Duration parsing
+#
+# Note: lowercase 'm'/'min' = minutes, uppercase 'M' = month (30 days).
+DURATION_RE = re.compile(r"^(\d+)(min|m|h|d|w|M)$")
+DURATION_UNITS = {
+    "min": 60,
+    "m": 60,
+    "h": 3600,
+    "d": 86400,
+    "w": 604800,
+    "M": 2592000,  # 30 days
+}
+
+
+def is_duration(s: str) -> bool:
+    return bool(DURATION_RE.match(s))
+
+
+def parse_duration(s: str) -> int:
+    m = DURATION_RE.match(s)
+    if not m:
+        die(tr("bad_duration", s=s))
+    return int(m.group(1)) * DURATION_UNITS[m.group(2)]
+
+
+## Scheduled start (snooze plan)
+#
+# Two formats: 'HH:MM' (today's date; if that time has already passed today,
+# that's an error instead of silently rolling over to tomorrow) or
+# 'DD.MM.YYYY HH:MM' (leading zeros on day/month optional). Unquoted, date
+# and time arrive as two separate tokens ('22.5.2026' '14:00') — DATE_RE
+# recognizes the leading date so _consume_when() can join both tokens before
+# parse_when() parses the combined string.
+
+DATE_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
+WHEN_TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
+WHEN_DATETIME_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})$")
+
+
+def parse_when(s: str) -> int:
+    """Parses 'plan' timestamps ('HH:MM' or 'DD.MM.YYYY HH:MM') into a Unix timestamp."""
+    s = s.strip()
+    now = time.time()
+
+    m = WHEN_DATETIME_RE.match(s)
+    if m:
+        day, month, year, hour, minute = (int(g) for g in m.groups())
+        try:
+            dt = datetime(year, month, day, hour, minute)
+        except ValueError as exc:
+            die(tr("bad_when_value", s=s, exc=exc), code=2)
+        if dt.timestamp() <= now:
+            die(tr("when_past", s=s), code=2)
+        return int(dt.timestamp())
+
+    m = WHEN_TIME_RE.match(s)
+    if m:
+        hour, minute = (int(g) for g in m.groups())
+        today = time.localtime()
+        try:
+            dt = datetime(today.tm_year, today.tm_mon, today.tm_mday, hour, minute)
+        except ValueError as exc:
+            die(tr("bad_when_value", s=s, exc=exc), code=2)
+        if dt.timestamp() <= now:
+            example = f"{time.strftime('%d.%m.%Y', today)} {s}"
+            die(tr("time_already_past_today", s=s, example=example), code=2)
+        return int(dt.timestamp())
+
+    die(tr("bad_when_format", s=s), code=2)
+
+
+def _consume_when(tokens: list) -> tuple:
+    """Pulls the timestamp off the start of tokens for 'snooze plan' (one or two tokens).
+
+    Both quoted ('DD.MM.YYYY HH:MM' as one argument) and unquoted (two
+    arguments 'DD.MM.YYYY' 'HH:MM') are accepted. Returns (since, rest)."""
+    if not tokens:
+        die(tr("plan_need_time"), code=2)
+    if WHEN_DATETIME_RE.match(tokens[0]):
+        return parse_when(tokens[0]), tokens[1:]
+    if DATE_RE.match(tokens[0]):
+        if len(tokens) < 2 or not WHEN_TIME_RE.match(tokens[1]):
+            die(tr("plan_need_time_after_date", date=tokens[0]), code=2)
+        return parse_when(f"{tokens[0]} {tokens[1]}"), tokens[2:]
+    if WHEN_TIME_RE.match(tokens[0]):
+        return parse_when(tokens[0]), tokens[1:]
+    die(tr("plan_bad_time", s=tokens[0]), code=2)
+
+
+## Hostnames
+
+GLOB_CHARS = set("*?[")
+
+
+def fqdn(name: str) -> str:
+    return name if "." in name else f"{name}.{CONFIG['domain']}"
+
+
+def local_fqdn() -> str:
+    """Local FQDN, robust against 'localhost'/short names from getfqdn()."""
+    for candidate in (socket.getfqdn(), socket.gethostname()):
+        candidate = (candidate or "").strip().lower()
+        if candidate and candidate not in ("localhost", "localhost.localdomain"):
+            return candidate if "." in candidate else f"{candidate}.{CONFIG['domain']}"
+    die(tr("no_local_hostname"))
+
+
+def is_pattern(token: str) -> bool:
+    """True if token is a glob (*?[) or a regex (~ prefix)."""
+    return token.startswith("~") or any(c in GLOB_CHARS for c in token)
+
+
+def split_targets(tokens: list) -> tuple:
+    """Splits tokens into hosts/patterns and hostgroups (@ prefix)."""
+    hosts, groups = [], []
+    for t in tokens:
+        if t.startswith("@"):
+            groups.append(t[1:])
+        else:
+            hosts.append(t)
+    return hosts, groups
+
+
+def expand_host_patterns(tokens: list) -> tuple:
+    """Resolves globs/regexes against the Zabbix host list. Returns (names, not_found).
+
+    Tokens without a pattern get FQDN-completed and passed through unchanged
+    (existence is checked later in resolve_hosts)."""
+    literal, patterns = [], []
+    for t in tokens:
+        (patterns if is_pattern(t) else literal).append(t)
+    if not patterns:
+        return [fqdn(t) for t in literal], []
+
+    all_hosts = [h["host"] for h in zabbix("host.get", {"output": ["host"]})]
+    resolved = [fqdn(t) for t in literal]
+    missing = []
+    for pat in patterns:
+        if pat.startswith("~"):
+            try:
+                rx = re.compile(pat[1:])
+            except re.error as exc:
+                die(tr("bad_regex", pat=pat, exc=exc))
+            matches = [h for h in all_hosts if rx.search(h)]
+        else:
+            needle = fqdn(pat)
+            matches = fnmatch.filter(all_hosts, needle)
+        if matches:
+            resolved.extend(matches)
+        else:
+            missing.append(pat)
+    # Order stable and deduplicated.
+    seen, ordered = set(), []
+    for h in resolved:
+        if h not in seen:
+            seen.add(h)
+            ordered.append(h)
+    return ordered, missing
+
+
+## Zabbix API
+
+class ZabbixError(Exception):
+    """API or transport error; handled by callers per-target or globally."""
+
+
+def zabbix(method: str, params):
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1,
+    }).encode()
+    req = urllib.request.Request(
+        CONFIG["url"],
+        data=payload,
+        headers={
+            "Content-Type": "application/json-rpc",
+            "Authorization": f"Bearer {CONFIG['token']}",
+            "User-Agent": f"snooze/{VERSION}",
+        },
+    )
+    retries = max(0, int(CONFIG["retries"]))
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=int(CONFIG["timeout"])) as r:
+                data = json.loads(r.read())
+            break
+        except urllib.error.HTTPError as e:
+            # HTTP errors (4xx/5xx) are usually not transient -> don't retry.
+            raise ZabbixError(f"Zabbix HTTP {e.code}: {e.reason}")
+        except urllib.error.URLError as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(1 + attempt)
+                continue
+            raise ZabbixError(tr("zbx_unreachable", exc=e))
+    if "error" in data:
+        e = data["error"]
+        raise ZabbixError(tr("zbx_api_error", msg=e.get("message"), data=e.get("data")))
+    return data["result"]
+
+
+def resolve_hosts(hostnames: list) -> dict:
+    """Maps FQDN → hostid. Hosts not found → None."""
+    res = zabbix("host.get", {
+        "filter": {"host": hostnames},
+        "output": ["hostid", "host"],
+    })
+    found = {h["host"]: h["hostid"] for h in res}
+    return {n: found.get(n) for n in hostnames}
+
+
+def resolve_groups(groupnames: list) -> dict:
+    """Maps group name → groupid. Not found → None."""
+    res = zabbix("hostgroup.get", {
+        "filter": {"name": groupnames},
+        "output": ["groupid", "name"],
+    })
+    found = {g["name"]: g["groupid"] for g in res}
+    return {n: found.get(n) for n in groupnames}
+
+
+def get_maintenance(name: str):
+    """Returns the (first) maintenance object with this name, or None."""
+    res = zabbix("maintenance.get", {
+        "filter": {"name": name},
+        "output": ["maintenanceid", "active_since", "active_till"],
+    })
+    return res[0] if res else None
+
+
+def list_hosts() -> int:
+    """Lists all hosts from Zabbix (technical name + visible name)."""
+    res = zabbix("host.get", {"output": ["host", "name"]})
+    if not res:
+        print(tr("no_hosts_found"))
+        return 0
+    for h in sorted(res, key=lambda x: x["host"].lower()):
+        host = h["host"]
+        name = h.get("name", "")
+        print(f"{host}  ({name})" if name and name != host else host)
+    return 0
+
+
+def list_hostgroups() -> int:
+    """Lists all hostgroups from Zabbix."""
+    res = zabbix("hostgroup.get", {"output": ["name"]})
+    if not res:
+        print(tr("no_groups_found"))
+        return 0
+    for g in sorted(res, key=lambda x: x["name"].lower()):
+        print(g["name"])
+    return 0
+
+
+## Actions
+
+def build_reason(explicit: str = None) -> str:
+    """Returns the maintenance comment; {user}/{host} placeholders resolved."""
+    template = explicit if explicit is not None else CONFIG["reason"]
+    try:
+        return template.format(user=getpass.getuser(), host=socket.gethostname())
+    except (KeyError, IndexError):
+        return template  # invalid placeholders -> pass the raw text through
+
+
+def _maintenance_params(name, since, till, secs, reason, hosts=None, groups=None) -> dict:
+    params = {
+        "name": name,
+        "active_since": since,
+        "active_till": till,
+        "maintenance_type": 0,
+        "description": reason,
+        "timeperiods": [{
+            "timeperiod_type": 0,
+            "start_date": since,
+            "period": secs,
+        }],
+    }
+    if hosts:
+        params["hosts"] = [{"hostid": hid} for hid in hosts]
+    if groups:
+        params["groups"] = [{"groupid": gid} for gid in groups]
+    return params
+
+
+def _upsert_maintenance(name, since, till, secs, reason, hosts=None, groups=None):
+    """Creates a maintenance and replaces an existing one of the same name.
+
+    Update in place (maintenance.update) rather than delete+recreate, so the
+    target is never left unmuted in between if a call fails."""
+    existing = get_maintenance(name)
+    params = _maintenance_params(name, since, till, secs, reason, hosts, groups)
+    if not existing:
+        zabbix("maintenance.create", params)
+        return
+    # Update instead of delete+create: no unmuted window in between.
+    params["maintenanceid"] = existing["maintenanceid"]
+    params.pop("name", None)  # name stays unchanged
+    zabbix("maintenance.update", params)
+
+
+def run_snooze(duration_str, hosts, groups=None, reason=None, since=None) -> int:
+    """since: scheduled start (Unix timestamp) for 'snooze plan'; None = immediately (now)."""
+    groups = groups or []
+    secs = parse_duration(duration_str)
+    now = int(time.time())
+    since = now if since is None else since
+    end = since + secs
+    since_label = time.strftime("%Y-%m-%d %H:%M", time.localtime(since))
+    end_label = time.strftime("%Y-%m-%d %H:%M", time.localtime(end))
+    status = (tr("status_planned", since=since_label, end=end_label) if since > now
+              else tr("status_muted", end=end_label))
+    reason = build_reason(reason)
+    failed = 0
+
+    if hosts:
+        host_ids = resolve_hosts(hosts)
+        for h in hosts:
+            hid = host_ids.get(h)
+            if not hid:
+                _print_err(h, tr("not_in_zabbix"))
+                failed += 1
+                continue
+            try:
+                _upsert_maintenance(CONFIG["prefix"] + h, since, end, secs, reason, hosts=[hid])
+                _print_ok(h, status)
+            except ZabbixError as exc:
+                _print_err(h, str(exc))
+                failed += 1
+
+    if groups:
+        group_ids = resolve_groups(groups)
+        for g in groups:
+            gid = group_ids.get(g)
+            if not gid:
+                _print_err(f"@{g}", tr("group_not_in_zabbix"))
+                failed += 1
+                continue
+            try:
+                _upsert_maintenance(CONFIG["prefix"] + "@" + g, since, end, secs, reason, groups=[gid])
+                _print_ok(f"@{g}", tr("group_status", status=status))
+            except ZabbixError as exc:
+                _print_err(f"@{g}", str(exc))
+                failed += 1
+
+    return 1 if failed else 0
+
+
+def run_extend(duration_str, hosts, groups=None) -> int:
+    """Extends existing snooze windows by DURATION from their current end."""
+    groups = groups or []
+    secs = parse_duration(duration_str)
+    now = int(time.time())
+    failed = 0
+
+    def extend_one(label, name):
+        nonlocal failed
+        existing = get_maintenance(name)
+        if not existing:
+            _print_err(label, tr("no_active_entry"))
+            failed += 1
+            return
+        base = max(int(existing["active_till"]), now)
+        new_end = base + secs
+        new_period = new_end - now
+        end_label = time.strftime("%Y-%m-%d %H:%M", time.localtime(new_end))
+        try:
+            zabbix("maintenance.update", {
+                "maintenanceid": existing["maintenanceid"],
+                "active_till": new_end,
+                "timeperiods": [{
+                    "timeperiod_type": 0,
+                    "start_date": now,
+                    "period": new_period,
+                }],
+            })
+            _print_ok(label, tr("extended_until", end=end_label))
+        except ZabbixError as exc:
+            _print_err(label, str(exc))
+            failed += 1
+
+    for h in hosts:
+        extend_one(h, CONFIG["prefix"] + h)
+    for g in groups:
+        extend_one(f"@{g}", CONFIG["prefix"] + "@" + g)
+    return 1 if failed else 0
+
+
+def run_wakeup(hosts, groups=None) -> int:
+    groups = groups or []
+    failed = 0
+
+    def wake_one(label, name):
+        nonlocal failed
+        existing = get_maintenance(name)
+        if not existing:
+            _print_err(label, tr("no_active_entry"))
+            failed += 1
+            return
+        try:
+            zabbix("maintenance.delete", [existing["maintenanceid"]])
+            _print_ok(label, tr("woken"))
+        except ZabbixError as exc:
+            _print_err(label, str(exc))
+            failed += 1
+
+    for h in hosts:
+        wake_one(h, CONFIG["prefix"] + h)
+    for g in groups:
+        wake_one(f"@{g}", CONFIG["prefix"] + "@" + g)
+    return 1 if failed else 0
+
+
+def _snooze_maintenances() -> list:
+    """All maintenances managed by snooze (name starts with prefix)."""
+    res = zabbix("maintenance.get", {
+        "output": ["maintenanceid", "name", "active_since", "active_till", "description"],
+        "search": {"name": CONFIG["prefix"]},
+        "startSearch": True,
+    })
+    return [m for m in res if m["name"].startswith(CONFIG["prefix"])]
+
+
+def _format_remaining(secs: int) -> str:
+    """Formats remaining seconds as 'noch 1d 2h 3m'/'1d 2h 3m left', or abgelaufen/expired."""
+    if secs <= 0:
+        return tr("expired")
+    days, secs = divmod(secs, 86400)
+    hours, secs = divmod(secs, 3600)
+    mins, _ = divmod(secs, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if mins or not parts:
+        parts.append(f"{mins}m")
+    return tr("remaining", time=" ".join(parts))
+
+
+def run_status() -> int:
+    """Shows already-started snooze maintenances with remaining time and reason.
+
+    Planned, not-yet-started windows ('snooze plan') show up under 'list plans'."""
+    now = int(time.time())
+    items = [m for m in _snooze_maintenances() if int(m["active_since"]) <= now]
+    if not items:
+        print(tr("no_active_entries"))
+        return 0
+    for m in sorted(items, key=lambda x: x["name"].lower()):
+        target = m["name"][len(CONFIG["prefix"]):]
+        till = int(m["active_till"])
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(till))
+        reason = m.get("description", "")
+        suffix = f"  [{reason}]" if reason else ""
+        print(f"{target:<30}{_format_remaining(till - now):<16}({tr('word_until')} {when}){suffix}")
+    return 0
+
+
+def run_plans() -> int:
+    """Shows planned, not-yet-started snooze entries ('snooze plan')."""
+    now = int(time.time())
+    items = [m for m in _snooze_maintenances() if int(m["active_since"]) > now]
+    if not items:
+        print(tr("no_planned_entries"))
+        return 0
+    for m in sorted(items, key=lambda x: int(x["active_since"])):
+        target = m["name"][len(CONFIG["prefix"]):]
+        since = int(m["active_since"])
+        till = int(m["active_till"])
+        since_label = time.strftime("%Y-%m-%d %H:%M", time.localtime(since))
+        till_label = time.strftime("%Y-%m-%d %H:%M", time.localtime(till))
+        reason = m.get("description", "")
+        suffix = f"  [{reason}]" if reason else ""
+        print(f"{target:<30}{tr('word_starts')} {since_label:<18}{tr('word_until')} {till_label}{suffix}")
+    return 0
+
+
+def run_cleanup() -> int:
+    """Deletes expired snooze windows (Zabbix doesn't clean them up itself)."""
+    now = int(time.time())
+    expired = [m for m in _snooze_maintenances() if int(m["active_till"]) <= now]
+    if not expired:
+        print(tr("no_expired_entries"))
+        return 0
+    try:
+        zabbix("maintenance.delete", [m["maintenanceid"] for m in expired])
+    except ZabbixError as exc:
+        die(tr("cleanup_failed", exc=exc))
+    for m in sorted(expired, key=lambda x: x["name"].lower()):
+        print(f"{tr('removed')}  {m['name'][len(CONFIG['prefix']):]}")
+    print(tr("cleanup_summary", count=len(expired)))
+    return 0
+
+
+## Suppressed problems (list suppressed)
+#
+# Zabbix marks problems on hosts in maintenance as "suppressed" rather than
+# hiding them outright; problem.get(suppressed=True) still returns them, and
+# selectSuppressionData reveals exactly which maintenanceid did it. That lets
+# us show precisely what a given snooze window is currently suppressing —
+# and what would alert again immediately on the next unmute.
+
+SEVERITY_LABELS = {
+    "de": {
+        "0": "Nicht klassifiziert",
+        "1": "Information",
+        "2": "Warnung",
+        "3": "Durchschnittlich",
+        "4": "Hoch",
+        "5": "Katastrophe",
+    },
+    "en": {
+        "0": "Not classified",
+        "1": "Information",
+        "2": "Warning",
+        "3": "Average",
+        "4": "High",
+        "5": "Disaster",
+    },
+}
+
+
+def suppressed_problems(maintenanceid: str, hostids=None, groupids=None) -> list:
+    """Problems currently suppressed by the given maintenance window."""
+    params = {
+        "output": ["eventid", "name", "severity", "clock"],
+        "selectSuppressionData": ["maintenanceid", "suppress_until"],
+        "suppressed": True,
+    }
+    if hostids:
+        params["hostids"] = hostids
+    if groupids:
+        params["groupids"] = groupids
+    res = zabbix("problem.get", params)
+    matching = [
+        p for p in res
+        if any(s.get("maintenanceid") == maintenanceid for s in p.get("suppression_data") or [])
+    ]
+    return sorted(matching, key=lambda p: int(p.get("severity", 0)), reverse=True)
+
+
+def _print_suppressed(label: str, maintenanceid: str, hostids=None, groupids=None):
+    """Prints one line per suppressed problem, or a 'none' notice."""
+    problems = suppressed_problems(maintenanceid, hostids=hostids, groupids=groupids)
+    if not problems:
+        print(f"{label}  {tr('no_suppressed')}")
+        return
+    for p in problems:
+        sev = SEVERITY_LABELS[LANG].get(str(p.get("severity")), p.get("severity"))
+        since = time.strftime("%Y-%m-%d %H:%M", time.localtime(int(p["clock"])))
+        print(f"{label}  [{sev}]  {p['name']}  {tr('word_since')} {since}")
+
+
+def run_suppressed(hosts, groups=None) -> int:
+    """Shows problems currently suppressed by snooze windows.
+
+    Without targets: all windows managed by snooze (expired ones then simply
+    show no more suppressed problems, same as with 'list active')."""
+    groups = groups or []
+    failed = 0
+
+    if not hosts and not groups:
+        items = sorted(_snooze_maintenances(), key=lambda x: x["name"].lower())
+        if not items:
+            print(tr("no_active_entries"))
+            return 0
+        targets = [m["name"][len(CONFIG["prefix"]):] for m in items]
+        host_names = [t for t in targets if not t.startswith("@")]
+        group_names = [t[1:] for t in targets if t.startswith("@")]
+        host_ids = resolve_hosts(host_names) if host_names else {}
+        group_ids = resolve_groups(group_names) if group_names else {}
+        for m, target in zip(items, targets):
+            if target.startswith("@"):
+                gid = group_ids.get(target[1:])
+                _print_suppressed(target, m["maintenanceid"], groupids=[gid] if gid else None)
+            else:
+                hid = host_ids.get(target)
+                _print_suppressed(target, m["maintenanceid"], hostids=[hid] if hid else None)
+        return 0
+
+    if hosts:
+        host_ids = resolve_hosts(hosts)
+        for h in hosts:
+            hid = host_ids.get(h)
+            if not hid:
+                _print_err(h, tr("not_in_zabbix"))
+                failed += 1
+                continue
+            existing = get_maintenance(CONFIG["prefix"] + h)
+            if not existing:
+                _print_err(h, tr("no_active_entry"))
+                failed += 1
+                continue
+            _print_suppressed(h, existing["maintenanceid"], hostids=[hid])
+
+    if groups:
+        group_ids = resolve_groups(groups)
+        for g in groups:
+            gid = group_ids.get(g)
+            if not gid:
+                _print_err(f"@{g}", tr("group_not_in_zabbix"))
+                failed += 1
+                continue
+            existing = get_maintenance(CONFIG["prefix"] + "@" + g)
+            if not existing:
+                _print_err(f"@{g}", tr("no_active_entry"))
+                failed += 1
+                continue
+            _print_suppressed(f"@{g}", existing["maintenanceid"], groupids=[gid])
+
+    return 1 if failed else 0
+
+
+## Target collection (arguments, -F file, stdin)
+
+def read_targets_file(path: str) -> list:
+    """Reads targets (one token per line, # = comment) from a file or stdin (-)."""
+    if path == "-":
+        text = sys.stdin.read()
+    else:
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError as exc:
+            die(tr("file_unreadable", path=path, exc=exc))
+    out = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            out.extend(line.split())
+    return out
+
+
+def confirm(count: int, yes: bool) -> bool:
+    """Confirmation prompt for many targets; skipped with -Y/--yes."""
+    threshold = int(CONFIG["confirm_threshold"])
+    if yes or count <= threshold:
+        return True
+    if not sys.stdin.isatty():
+        die(tr("confirm_need_yes", count=count, threshold=threshold), code=2)
+    answer = input(tr("confirm_prompt", count=count)).strip().lower()
+    return answer in ("j", "ja", "y", "yes")
+
+
+## CLI
+
+HELP_DE = """snooze {version} — Zabbix-Hosts und -Hostgruppen temporär stummschalten
+
+Verwendung:
+  snooze                          Lokalen Host für {duration} muten (Shortcut)
+  snooze [DAUER] [ZIELE…]         Muten (mute ist impliziert)
+  snooze mute [DAUER] [ZIELE…]    Muten (explizit)
+  snooze plan ZEIT [DAUER] [ZIELE…] Muten mit geplantem Start statt sofort
+  snooze extend DAUER [ZIELE…]    Laufende Stummschaltung um DAUER verlängern
+  snooze unmute [ZIELE…]          Stummschaltung aufheben
+  snooze list hosts               Alle Zabbix-Hosts auflisten
+  snooze list groups              Alle Hostgruppen auflisten
+  snooze list active              Aktive Snoozes anzeigen (Alias: snooze status)
+  snooze list plans               Geplante, noch nicht gestartete Snoozes (plan)
+  snooze list suppressed [ZIELE…] Durch snooze unterdrückte Probleme (kein Ziel = alle)
+  snooze cleanup                  Abgelaufene Snoozes entfernen (Alias: prune)
+  snooze help                     Diese Hilfe (auch -h, --help)
+  snooze version                  Version und Autor ausgeben (auch -V, --version)
+
+Optionen:
+  -F, --file DATEI                Ziele aus DATEI lesen (ein Token/Zeile, - = stdin)
+  -Y, --yes                       Sicherheitsabfrage bei vielen Zielen überspringen
+      --reason TEXT               Grund (überschreibt Config; {{user}}/{{host}} erlaubt)
+
+Geplanter Start (snooze plan ZEIT [DAUER] [ZIELE…]):
+  HH:MM                           Heute; Fehler, falls die Uhrzeit heute schon vorbei ist
+  TT.MM.JJJJ HH:MM                Fester Tag + Uhrzeit (Tag/Monat auch mit führender Null)
+  Beispiele: snooze plan 22:00 2h host1
+             snooze plan 22.5.2026 14:00 4h host1
+             snooze plan 02.05.2026 14:00 4h host1
+
+Dauer:
+  30m/30min  4h  2d  1w  1M       (m/min = Minuten, M = Monat = 30 Tage)
+
+Ziele:
+  Hosts ohne Punkt werden mit .{domain} ergänzt.
+  Glob erlaubt: 'vp-mail-*', 'vt-foo-?'. Regex mit ~-Präfix: '~^vp-mail-\\d+'.
+  Hostgruppen mit @-Präfix angeben, wegen Slash/Leerzeichen am besten quoten:
+    snooze 1d "@Discovered hosts"
+    snooze mute 2h "@Servers/Linux" host1
+    snooze unmute "@Servers/Linux"
+""".format(version=VERSION, duration=DEFAULTS["duration"], domain=DEFAULTS["domain"])
+
+HELP_EN = """snooze {version} — temporarily mute Zabbix hosts and hostgroups
+
+Usage:
+  snooze                          Mute the local host for {duration} (shortcut)
+  snooze [DURATION] [TARGETS…]    Mute (mute is implied)
+  snooze mute [DURATION] [TARGETS…] Mute (explicit)
+  snooze plan TIME [DURATION] [TARGETS…] Mute with a scheduled start instead of now
+  snooze extend DURATION [TARGETS…] Extend a running mute by DURATION
+  snooze unmute [TARGETS…]        Remove a mute
+  snooze list hosts               List all Zabbix hosts
+  snooze list groups              List all hostgroups
+  snooze list active              Show active snoozes (alias: snooze status)
+  snooze list plans               Show planned, not-yet-started snoozes (plan)
+  snooze list suppressed [TARGETS…] Show problems suppressed by snooze (no target = all)
+  snooze cleanup                  Remove expired snoozes (alias: prune)
+  snooze help                     Show this help (also -h, --help)
+  snooze version                  Show version and author (also -V, --version)
+
+Options:
+  -F, --file FILE                 Read targets from FILE (one token/line, - = stdin)
+  -Y, --yes                       Skip the confirmation prompt for many targets
+      --reason TEXT               Set the reason (overrides config; {{user}}/{{host}} allowed)
+
+Scheduled start (snooze plan TIME [DURATION] [TARGETS…]):
+  HH:MM                           Today; error if that time has already passed today
+  DD.MM.YYYY HH:MM                Fixed day + time (day/month may have a leading zero)
+  Examples:  snooze plan 22:00 2h host1
+             snooze plan 22.5.2026 14:00 4h host1
+             snooze plan 02.05.2026 14:00 4h host1
+
+Duration:
+  30m/30min  4h  2d  1w  1M       (m/min = minutes, M = month = 30 days)
+
+Targets:
+  Hosts without a dot get .{domain} appended.
+  Globs allowed: 'vp-mail-*', 'vt-foo-?'. Regex with a ~ prefix: '~^vp-mail-\\d+'.
+  Prefix hostgroups with @; quote them because of slashes/spaces:
+    snooze 1d "@Discovered hosts"
+    snooze mute 2h "@Servers/Linux" host1
+    snooze unmute "@Servers/Linux"
+""".format(version=VERSION, duration=DEFAULTS["duration"], domain=DEFAULTS["domain"])
+
+HELP = HELP_DE if LANG == "de" else HELP_EN
+
+
+def die(msg: str, code: int = 1):
+    print(f"snooze: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def extract_flags(args: list) -> tuple:
+    """Extracts options (-F/--file, -Y/--yes, --reason).
+
+    Returns (positionals, {file, yes, reason}). Everything after '--' is positional."""
+    opts = {"file": None, "yes": False, "reason": None}
+    pos = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            pos.extend(args[i + 1:])
+            break
+        elif a in ("-Y", "--yes"):
+            opts["yes"] = True
+        elif a in ("-F", "--file"):
+            if i + 1 >= len(args):
+                die(tr("flag_need_filename", flag=a), code=2)
+            opts["file"] = args[i + 1]
+            i += 1
+        elif a.startswith("--file="):
+            opts["file"] = a.split("=", 1)[1]
+        elif a == "--reason":
+            if i + 1 >= len(args):
+                die(tr("flag_need_text"), code=2)
+            opts["reason"] = args[i + 1]
+            i += 1
+        elif a.startswith("--reason="):
+            opts["reason"] = a.split("=", 1)[1]
+        else:
+            pos.append(a)
+        i += 1
+    return pos, opts
+
+
+def collect_targets(tokens: list, opts: dict) -> list:
+    """Combines CLI tokens with targets from -F/stdin.
+
+    Without -F, stdin is still read automatically if it isn't a TTY (piped or
+    redirected) - 'echo host1 host2 | snooze' works without spelling out
+    -F -. A TTY is left alone so an interactive shell never blocks waiting
+    for input the user never intended to pipe."""
+    targets = list(tokens)
+    if opts["file"]:
+        targets.extend(read_targets_file(opts["file"]))
+    elif not sys.stdin.isatty():
+        targets.extend(read_targets_file("-"))
+    return targets
+
+
+def _finish_mute(duration: str, target_tokens: list, opts: dict, since=None) -> int:
+    """Shared tail of 'mute' and 'plan': resolve targets, confirm, execute."""
+    target_tokens = collect_targets(target_tokens, opts)
+    host_tokens, groups = split_targets(target_tokens)
+    hosts, missing = expand_host_patterns(host_tokens)
+    for pat in missing:
+        _print_err(pat, tr("no_pattern_match"))
+    if not hosts and not groups and not missing:
+        hosts = [local_fqdn()]
+    if not confirm(len(hosts) + len(groups), opts["yes"]):
+        die(tr("aborted"), code=2)
+    rc = run_snooze(duration, hosts, groups, reason=opts["reason"], since=since)
+    return 1 if missing else rc
+
+
+def run_mute(tokens: list, opts: dict) -> int:
+    if tokens and is_duration(tokens[0]):
+        duration = tokens[0]
+        target_tokens = tokens[1:]
+    else:
+        duration = CONFIG["duration"]
+        target_tokens = tokens
+    return _finish_mute(duration, target_tokens, opts)
+
+
+def run_plan_cmd(tokens: list, opts: dict) -> int:
+    since, rest = _consume_when(tokens)
+    if rest and is_duration(rest[0]):
+        duration, target_tokens = rest[0], rest[1:]
+    else:
+        duration, target_tokens = CONFIG["duration"], rest
+    return _finish_mute(duration, target_tokens, opts, since=since)
+
+
+def run_extend_cmd(tokens: list, opts: dict) -> int:
+    if not tokens or not is_duration(tokens[0]):
+        die(tr("extend_need_duration"), code=2)
+    duration = tokens[0]
+    target_tokens = collect_targets(tokens[1:], opts)
+    host_tokens, groups = split_targets(target_tokens)
+    hosts, missing = expand_host_patterns(host_tokens)
+    for pat in missing:
+        _print_err(pat, tr("no_pattern_match"))
+    if not hosts and not groups and not missing:
+        hosts = [local_fqdn()]
+    rc = run_extend(duration, hosts, groups)
+    return 1 if missing else rc
+
+
+def run_unmute(tokens: list, opts: dict) -> int:
+    target_tokens = collect_targets(tokens, opts)
+    host_tokens, groups = split_targets(target_tokens)
+    hosts, missing = expand_host_patterns(host_tokens)
+    for pat in missing:
+        _print_err(pat, tr("no_pattern_match"))
+    if not hosts and not groups and not missing:
+        hosts = [local_fqdn()]
+    rc = run_wakeup(hosts, groups)
+    return 1 if missing else rc
+
+
+def run_list_suppressed(tokens: list) -> int:
+    """Parses targets for 'list suppressed'; no targets = all active snooze windows."""
+    host_tokens, groups = split_targets(tokens)
+    hosts, missing = expand_host_patterns(host_tokens)
+    for pat in missing:
+        _print_err(pat, tr("no_pattern_match"))
+    rc = run_suppressed(hosts, groups)
+    return 1 if missing else rc
+
+
+def run_list(subargs: list) -> int:
+    """Dispatcher for 'list hosts|groups|active|plans|suppressed'."""
+    what = subargs[0] if subargs else ""
+    if what == "hosts":
+        return list_hosts()
+    if what == "groups":
+        return list_hostgroups()
+    if what == "active":
+        return run_status()
+    if what == "plans":
+        return run_plans()
+    if what == "suppressed":
+        return run_list_suppressed(subargs[1:])
+    die(tr("list_need_subcmd"), code=2)
+
+
+def main(argv: list) -> int:
+    global CONFIG
+    CONFIG = load_config()
+    apply_lang_override(CONFIG)
+
+    positionals, opts = extract_flags(argv[1:])
+    cmd = positionals[0] if positionals else ""
+
+    # help/version never need a configured token - checked before the token
+    # gate below, so 'snooze --help' works even with no config/token at all.
+    if cmd in ("-h", "--help", "help"):
+        print(HELP)
+        return 0
+    if cmd in ("-V", "--version", "version"):
+        print(f"snooze {VERSION}")
+        print(AUTHOR)
+        return 0
+
+    if not CONFIG["token"]:
+        die(tr("no_token"))
+
+    if not positionals and not opts["file"]:
+        return run_mute([], opts)
+
+    rest = positionals[1:]
+
+    if cmd == "mute":
+        return run_mute(rest, opts)
+    if cmd == "plan":
+        return run_plan_cmd(rest, opts)
+    if cmd == "extend":
+        return run_extend_cmd(rest, opts)
+    if cmd == "unmute":
+        return run_unmute(rest, opts)
+    if cmd == "list":
+        return run_list(rest)
+    if cmd == "status":                       # alias for 'list active'
+        return run_list(["active"])
+    if cmd in ("cleanup", "prune"):
+        return run_cleanup()
+
+    # No known command -> implicit mute (positionals as targets).
+    return run_mute(positionals, opts)
+
+
+CONFIG = {}  # populated in main(); default for direct function calls/tests
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv))
+    except ZabbixError as exc:
+        die(str(exc))
+    except KeyboardInterrupt:
+        die(tr("aborted"), code=130)

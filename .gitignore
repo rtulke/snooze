@@ -1,0 +1,25 @@
+# Real config files with live secrets — only the .example templates are tracked
+snooze.conf
+etc/snooze.conf
+.env
+
+# Local AI-assistant project notes — not part of the public repo
+CLAUDE.md
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+
+# Build artifacts (Makefile, debian/rules)
+target/
+dist/
+*.deb
+*.buildinfo
+*.changes
+debian/snooze/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/*.substvars
+debian/*.log

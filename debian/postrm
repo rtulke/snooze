@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "purge" ]; then
+    # /etc/snooze.conf is created by postinst, not shipped/tracked by dpkg
+    # (it may contain a real token) - dpkg won't remove it on its own.
+    rm -f /etc/snooze.conf
+fi
+
+#DEBHELPER#
+
+exit 0

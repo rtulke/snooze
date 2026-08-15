@@ -1,0 +1,15 @@
+snooze (2.2-1) unstable; urgency=medium
+
+  * Read targets from stdin automatically when stdin is not a TTY.
+  * Split the documentation into README (landing page) and REFERENCE
+    (full command reference), both in English and German.
+  * Document the fully qualified Homebrew install path, since the formula
+    name collides with homebrew-core's unrelated snooze.
+
+ -- Robert Tulke <rt@ttyS0.sh>  Sat, 15 Aug 2026 12:32:09 +0200
+
+snooze (2.1-1) unstable; urgency=medium
+
+  * Initial packaging release.
+
+ -- Robert Tulke <rt@ttyS0.sh>  Sat, 15 Aug 2026 11:51:03 +0200

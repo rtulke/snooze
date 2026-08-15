@@ -1,0 +1,14 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	$(MAKE) build
+
+override_dh_auto_test:
+	# No automated test suite - dh_auto_build's py_compile already catches
+	# syntax errors.
+
+override_dh_auto_install:
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/snooze PREFIX=/usr SYSCONFDIR=/etc

@@ -1,0 +1,25 @@
+Source: snooze
+Section: admin
+Priority: optional
+Maintainer: Robert Tulke <rt@ttyS0.sh>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://github.com/rtulke/snooze
+Rules-Requires-Root: no
+
+Package: snooze
+Architecture: all
+Depends: ${misc:Depends}, python3
+Recommends: bash-completion
+Description: temporarily mute Zabbix hosts and hostgroups
+ snooze creates and removes time-boxed Zabbix Maintenance windows via the
+ Zabbix JSON-RPC API (Bearer token auth, requires Zabbix >= 6.4), so hosts
+ or entire hostgroups can be muted for a fixed duration - or for a window
+ scheduled to start later via "snooze plan" - without leaving noise behind:
+ muting an already-muted target updates its existing window in place
+ instead of deleting and recreating it.
+ .
+ All output is available in German and English, chosen automatically from
+ the system locale (or pinned via the 'lang' config key).
+ .
+ See snooze(1) and /etc/snooze.conf.example after installing.

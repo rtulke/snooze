@@ -1,0 +1,407 @@
+.TH SNOOZE 1 "2026-08-15" "snooze 2.2" "User Commands"
+.SH NAME
+snooze \- temporarily mute Zabbix hosts and hostgroups
+.SH SYNOPSIS
+.B snooze
+.RI [ DURATION ] " " [ TARGETS ...]
+.br
+.B snooze mute
+.RI [ DURATION ] " " [ TARGETS ...]
+.br
+.B snooze plan
+.I TIME
+.RI [ DURATION ] " " [ TARGETS ...]
+.br
+.B snooze extend
+.I DURATION
+.RI [ TARGETS ...]
+.br
+.B snooze unmute
+.RI [ TARGETS ...]
+.br
+.B snooze list
+.BR hosts | groups | active | plans
+.br
+.B snooze list suppressed
+.RI [ TARGETS ...]
+.br
+.B snooze status
+.br
+.B snooze cleanup
+.br
+.B snooze help
+.br
+.B snooze version
+.SH DESCRIPTION
+.B snooze
+mutes Zabbix hosts and hostgroups by creating time\-boxed Zabbix
+.I Maintenance
+windows via the Zabbix JSON\-RPC API (Bearer token auth, requires
+.B Zabbix >= 6.4
+\- older versions expect
+.I auth
+in the request body instead of a Bearer header), and can remove them again
+just as easily.
+.PP
+Each target gets its own maintenance window with a unique name
+(\fIsnooze:<host>\fR for hosts, \fIsnooze:@<group>\fR for hostgroups). Muting
+an already\-muted target updates the existing window in place
+.RB ( maintenance.update )
+instead of deleting and recreating it, so the target is never briefly
+unmuted mid\-operation; running
+.B mute
+again therefore extends/updates the mute idempotently.
+.PP
+If the first argument is a known command
+.RB ( mute ", " plan ", " extend ", " unmute ", " list ", " status ", "
+.BR cleanup / prune ", " help ),
+that command runs. Otherwise the entire input is treated as arguments to
+.BR mute ,
+so
+.B "snooze 2h host1"
+and
+.B "snooze mute 2h host1"
+are equivalent. With no arguments at all, the local host's FQDN is muted
+for the configured default duration.
+.SH COMMANDS
+.TP
+.BI "mute [" DURATION "] [" TARGETS ...]
+Mute the given targets (or the local host, if none given) for
+.IR DURATION ,
+or the configured default duration if none is given. Implied when the
+first argument isn't a known command.
+.TP
+.BI "plan " TIME " [" DURATION "] [" TARGETS ...]
+Like
+.BR mute ,
+but the maintenance window starts at
+.I TIME
+instead of immediately \- see
+.B SCHEDULED START
+below. Not shown by
+.B "list active"
+until it has actually started; see
+.BR "list plans" .
+.TP
+.BI "extend " DURATION " [" TARGETS ...]
+Extend an existing mute by
+.I DURATION
+from its current end (or from now, if it already expired).
+.I DURATION
+is mandatory here \- there is no default\-duration fallback for
+.BR extend .
+.TP
+.BI "unmute [" TARGETS ...]
+Remove a mute by deleting its maintenance window.
+.TP
+.B "list hosts"
+List all hosts known to Zabbix.
+.TP
+.B "list groups"
+List all hostgroups.
+.TP
+.B "list active"
+Show already\-started snooze maintenance windows, with remaining time, end
+time, and reason. Alias:
+.BR status .
+.TP
+.B "list plans"
+Show windows scheduled via
+.B plan
+that haven't started yet.
+.TP
+.BI "list suppressed [" TARGETS ...]
+Show Zabbix problems currently suppressed by snooze's maintenance windows
+(matched via the specific
+.IR maintenanceid ,
+not any unrelated Zabbix maintenance). With no targets, covers every window
+snooze currently manages. Answers: "what would alert immediately if I
+.B unmute
+right now?"
+.TP
+.B cleanup
+Delete all snooze\-managed windows whose end lies in the past (Zabbix
+doesn't do this on its own). Alias:
+.BR prune .
+.TP
+.B help
+Show usage (also
+.BR \-h ", " \-\-help ).
+.TP
+.B version
+Show version and author (also
+.BR \-V ", " \-\-version ).
+.SH OPTIONS
+.TP
+.BI "\-F, \-\-file " FILE
+Read targets from
+.I FILE
+(one token per line,
+.B #
+starts a comment;
+.B \-
+reads from stdin).
+.TP
+.B "\-Y, \-\-yes"
+Skip the confirmation prompt that would otherwise appear above
+.I confirm_threshold
+targets.
+.TP
+.BI "\-\-reason " TEXT
+Set the maintenance window's reason/comment, overriding the configured
+default.
+.I {user}
+and
+.I {host}
+placeholders are substituted at runtime.
+.PP
+Everything after a bare
+.B \-\-
+is treated as a target, even if it looks like a flag.
+.PP
+Piped or redirected input is read automatically, even without \fB\-F \-\fR:
+whenever stdin is not a TTY,
+.B snooze
+reads it the same way
+.B "\-F \-"
+would and adds whatever targets it finds to whatever was given on the
+command line. An interactive terminal (no pipe) is left alone, so a bare
+.B snooze
+never blocks waiting for input that was never sent, e.g.:
+.IP
+.nf
+echo host1 host2 host3 | snooze
+.fi
+.SH SCHEDULED START
+.B "snooze plan"
+accepts
+.I TIME
+in one of two formats:
+.TP
+.B HH:MM
+Today's date. If that time of day has already passed today, this is an
+error (no silent roll\-over to tomorrow) \- give the date explicitly instead.
+.TP
+.B DD.MM.YYYY\ HH:MM
+A fixed day and time. Leading zeros on day/month are optional. Given
+unquoted, date and time arrive as two separate shell arguments and are
+still accepted; quoted as one argument works the same way.
+.PP
+A
+.I TIME
+in the past is an error in either form (exit status 2).
+.SH DURATION
+Format:
+.I N
+immediately followed by
+.IR SUFFIX ,
+no separator (e.g.
+.IR 30m ", " 4h ", " 2d ).
+.TP
+.B m, min
+Minutes.
+.TP
+.B h
+Hours.
+.TP
+.B d
+Days.
+.TP
+.B w
+Weeks (7 days).
+.TP
+.B M
+Months (30 days).
+.PP
+Note the case: lowercase
+.B m
+/
+.B min
+are minutes, uppercase
+.B M
+is a month. Examples:
+.BR 30m ", " 30min ", " 4h ", " 2d ", " 1w ", " 1M .
+.SH TARGETS
+Hosts, glob patterns, regexes, and
+.B @
+\-prefixed hostgroups may be freely mixed in one call.
+.TP
+.B Hosts
+Names without a dot get the configured domain appended (e.g.
+.I prd\-mail\-5
+becomes
+.IR prd\-mail\-5.domain.tld ).
+.TP
+.B Glob
+May contain
+.BR * ", " ? ", and " [...] ,
+resolved against the live Zabbix host list, e.g.
+.IR prd\-mail\-* .
+.TP
+.B Regex
+Prefixed with
+.BR ~ ,
+e.g.
+.IR ~^prd\-mail\-\ed+$ .
+Matched against the technical hostname.
+.TP
+.B Hostgroups
+Prefixed with
+.BR @ .
+Quote them if the name contains spaces or slashes:
+.IR "\(dq@Servers/Linux\(dq" .
+Glob/regex apply only to hosts, not groups.
+.PP
+If a glob/regex matches many hosts, or many targets are given directly,
+.B snooze
+asks for confirmation above
+.I confirm_threshold
+targets;
+.B \-Y
+skips this. Without a controlling terminal (e.g. in a script or cron job),
+exceeding the threshold without
+.B \-Y
+is a hard error instead of hanging.
+.SH CONFIGURATION
+Settings come from an INI file (a single
+.B [snooze]
+section). The first readable file from this list wins:
+.IP
+.nf
+\&./snooze.conf
+~/.snooze.conf
+/etc/snooze.conf
+.fi
+.PP
+Keys:
+.IR url ", " token ", " domain ", " duration ", " prefix ", " timeout ,
+.IR reason ", " confirm_threshold ", " retries ", and " lang .
+See
+.I /etc/snooze.conf.example
+for the full annotated reference. Every key can also be set via an
+environment variable (see
+.BR ENVIRONMENT ).
+.SH LANGUAGE
+All output, including this text's counterpart from
+.BR "snooze help" ,
+is available in German and English. Chosen at startup from the system
+locale, checked in order
+.BR LC_ALL " > " LC_MESSAGES " > " LANG :
+German if the first value that is set starts with
+.BR de ,
+otherwise English \- including when no locale is set at all. The
+.I lang
+config key (or
+.B SNOOZE_LANG
+environment variable) can pin this to
+.B de
+or
+.B en
+regardless of the system locale; leave it empty for automatic detection.
+.SH EXIT STATUS
+.TP
+.B 0
+Everything succeeded.
+.TP
+.B 1
+At least one target was not found or failed.
+.TP
+.B 2
+Usage error (e.g.
+.B list
+without a subcommand, an aborted confirmation prompt, an invalid duration
+or scheduled time).
+.TP
+.B 130
+Aborted via Ctrl\-C.
+.SH FILES
+.TP
+.I /etc/snooze.conf
+System\-wide configuration (mode 0640, owner root, read via ACL for
+authorized admin users \- see
+.BR SECURITY ).
+.TP
+.I /etc/snooze.conf.example
+Annotated reference/template for the above; never read by
+.B snooze
+itself.
+.TP
+.I ~/.snooze.conf
+Per\-user configuration, consulted if
+.I ./snooze.conf
+is absent.
+.SH ENVIRONMENT
+.TP
+.BR SNOOZE_URL ", " ZABBIX_URL
+Override the
+.I url
+config key.
+.TP
+.BR SNOOZE_TOKEN ", " ZABBIX_TOKEN
+Override the
+.I token
+config key. The recommended way to supply the token without a file on
+disk at all (e.g. via a systemd
+.IR EnvironmentFile ).
+.TP
+.B SNOOZE_DOMAIN
+Override the
+.I domain
+config key.
+.TP
+.B SNOOZE_DURATION
+Override the
+.I duration
+config key.
+.TP
+.B SNOOZE_PREFIX
+Override the
+.I prefix
+config key.
+.TP
+.B SNOOZE_TIMEOUT
+Override the
+.I timeout
+config key.
+.TP
+.B SNOOZE_RETRIES
+Override the
+.I retries
+config key.
+.TP
+.B SNOOZE_REASON
+Override the
+.I reason
+config key.
+.TP
+.B SNOOZE_CONFIRM_THRESHOLD
+Override the
+.I confirm_threshold
+config key.
+.TP
+.B SNOOZE_LANG
+Override the
+.I lang
+config key \- see
+.BR LANGUAGE .
+.SH SECURITY
+The
+.I token
+is stored in plaintext wherever the config file lives. Access is controlled
+through file permissions and, in the ACL\-based deployment this project
+documents, a POSIX ACL granting read access to specific admin users rather
+than making the binary or config world\-readable. When installed from this
+package, no such restriction is applied automatically \- set it up to match
+your own environment if the token must not be world\-readable, or supply
+the token purely via
+.B SNOOZE_TOKEN
+/
+.B ZABBIX_TOKEN
+instead of a file.
+.SH SEE ALSO
+Full documentation and source:
+.br
+.UR https://github.com/rtulke/snooze
+.UE
+.SH AUTHOR
+Robert Tulke <rt@ttyS0.sh>

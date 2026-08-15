@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    # Seed /etc/snooze.conf from the example once, like the project's Ansible
+    # deployment does (main.yml, force: false) - never overwrite an existing
+    # file, so local edits (including the token) always survive upgrades.
+    if [ ! -e /etc/snooze.conf ] && [ -e /etc/snooze.conf.example ]; then
+        cp /etc/snooze.conf.example /etc/snooze.conf
+        chown root:root /etc/snooze.conf
+        chmod 0640 /etc/snooze.conf
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0
