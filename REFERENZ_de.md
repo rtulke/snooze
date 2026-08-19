@@ -54,8 +54,20 @@ lang =       # Standard: automatisch anhand der System-Locale
 | `-Y`, `--yes`       | Sicherheitsabfrage bei vielen Zielen überspringen                       |
 | `--reason TEXT`     | Grund setzen (überschreibt Config; `{user}`/`{host}` erlaubt)           |
 | `--json`            | Ergebnis als ein JSON-Dokument statt als Text ([JSON-Ausgabe](#json-ausgabe)) |
+| `-n`, `--dry-run`   | Zeigen, was passieren würde, ohne etwas in Zabbix zu ändern             |
 
 Alles nach `--` wird als Ziel behandelt, auch wenn es mit `-` beginnt.
+
+`--dry-run` löst Ziele weiterhin auf und schlägt bestehende Fenster nach — ein
+unbekannter Host oder ein fehlendes Fenster wird also genauso gemeldet wie im
+echten Lauf. Zurückgehalten werden nur die Aufrufe, die ein Wartungsfenster
+anlegen, ändern oder löschen. In der Textausgabe steht vor jeder Zeile `würde:`,
+in JSON tragen Umschlag und jede Zeile `"dry_run": true`.
+
+```bash
+snooze --dry-run 2h 'prd-mail-*'     # welche Hosts träfe das eigentlich?
+snooze -n unmute "@Servers/Linux"
+```
 
 Gepipte/umgeleitete Eingabe wird automatisch gelesen, auch ohne `-F -`: Sobald stdin
 kein Terminal ist, liest `snooze` sie genauso wie `-F -` und ergänzt die gefundenen
@@ -88,9 +100,11 @@ Der Rahmen ist bei jedem Kommando gleich:
   "version": "2.3",
   "command": "mute",
   "ok": true,
+  "dry_run": false,
   "results": [
     {
       "target": "prd-mail-5.domain.tld",
+      "type": "host",
       "result": "ok",
       "message": "gemutet bis 2026-08-19 12:35",
       "action": "muted",
@@ -105,9 +119,22 @@ Der Rahmen ist bei jedem Kommando gleich:
 }
 ```
 
-`ok` entspricht dem Exit-Code (`true` = 0). In `results` steht bei
-`mute`/`plan`/`extend`/`unmute`/`cleanup` ein Objekt je Ziel, bei den
-`list`-Kommandos eine Zeile je Eintrag.
+`ok` entspricht dem Exit-Code (`true` = 0), `dry_run` sagt, ob überhaupt etwas
+geändert wurde. In `results` steht bei `mute`/`plan`/`extend`/`unmute`/`cleanup`
+ein Objekt je Ziel, bei den `list`-Kommandos eine Zeile je Eintrag.
+
+**Jede Zeile hat `target` und `type`** (`host` oder `group`), unabhängig vom
+Kommando — derselbe Ausdruck funktioniert also überall:
+
+```bash
+snooze --json list hosts   | jq -r '.results[].target'
+snooze --json list active  | jq -r '.results[].target'
+```
+
+> Geändert in 2.4: `list hosts` und `list groups` lieferten vorher `host` bzw.
+> `group` statt `target`. Zeilen aus einer Aktion (`mute`, `unmute`, `extend`,
+> `cleanup`) tragen zusätzlich `result` und `dry_run`; reine Datenzeilen (die
+> `list`-Kommandos) nicht.
 
 **Feldnamen und Werte sind sprachunabhängig.** `snooze` gibt je nach Locale Deutsch
 oder Englisch aus, aber nur das Feld `message` ändert sich dadurch — `result`,
@@ -138,7 +165,13 @@ Ein Fehler, der den ganzen Lauf abbricht, steht stattdessen auf oberster Ebene:
 | `api_error` | Die Zabbix-API hat abgelehnt oder war nicht erreichbar |
 | `config` | Kein Token oder eine nicht lesbare Config-Datei |
 | `usage` | Falsche Argumente (Exit-Code 2) |
+| `internal` | Eine unerwartete Ausnahme — bitte melden |
 | `aborted` | Mit Strg-C abgebrochen (Exit-Code 130) |
+
+`config` deckt auch einen nicht-numerischen Wert bei `retries`, `timeout` oder
+`confirm_threshold` ab sowie eine `url`, die weder `http://` noch `https://` ist.
+Eine unerwartete Ausnahme wird als `internal` gemeldet statt als Traceback — ein
+`--json`-Lauf liefert also immer ein Dokument, das ein Skript lesen kann.
 
 Zeitstempel kommen paarweise: als Unix-Integer (`until`) zum Rechnen und als lokale
 ISO-8601-Zeichenkette mit UTC-Offset (`until_iso`) für Logs und Menschen.
@@ -193,6 +226,10 @@ Format: `<Zahl><Suffix>`.
 | `M`         | Monate (30 Tage)    |
 
 Beispiele: `30m`, `30min`, `4h`, `2d`, `1w`, `1M`. Wird keine Dauer angegeben, gilt `3h`.
+
+Das Maximum sind **365 Tage**. Alles darüber wird als Tippfehler abgelehnt — ein
+Fenster, das wirklich nie enden soll, gehört als dauerhaftes Wartungsfenster nach
+Zabbix, nicht in ein snooze.
 
 > **Achtung:** kleines `m` (und `min`) sind Minuten, großes `M` ist ein Monat.
 
@@ -353,6 +390,11 @@ andere Install-Wege bedeutet.
 Geplant ist, den Token über Ansible-Vault einzuspeisen (`vault_zabbix_token`) und dabei
 zu rotieren. Da das Skript `SNOOZE_TOKEN`/`ZABBIX_TOKEN` aus der Umgebung liest, kann der
 Token künftig auch ganz ohne Datei (z. B. via `EnvironmentFile`) bereitgestellt werden.
+
+`url` muss mit `http://` oder `https://` beginnen; alles andere wird abgelehnt. Ein
+reines `http://` überträgt den API-Token unverschlüsselt und erzeugt bei jedem Lauf
+eine Warnung auf stderr — für Laborumgebungen bleibt es erlaubt, aber stderr ist
+bewusst laut, damit es im Produktivbetrieb nicht untergeht.
 
 ## Installationsdetails
 

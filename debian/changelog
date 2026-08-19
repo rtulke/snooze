@@ -1,3 +1,19 @@
+snooze (2.4-1) unstable; urgency=medium
+
+  * Add -n/--dry-run: resolve targets and look up windows as usual, but hold
+    back every call that would create, update or delete a maintenance window.
+  * Refuse a mute longer than 365 days, reject a url that is neither http nor
+    https, and warn when the token would travel over plain http.
+  * Report a bad numeric config value (retries, timeout, confirm_threshold)
+    as an error instead of a traceback, and keep --json producing a document
+    even when an unexpected exception escapes.
+  * unmute now removes every maintenance window carrying the target's name,
+    so a duplicate created elsewhere can no longer keep a host muted.
+  * JSON: every row now has "target" and "type". This renames the "host" and
+    "group" keys that "list hosts"/"list groups" used in 2.3.
+
+ -- Robert Tulke <rt@ttyS0.sh>  Wed, 19 Aug 2026 12:00:00 +0200
+
 snooze (2.3-1) unstable; urgency=medium
 
   * Add --json: one machine-readable document on stdout instead of text,

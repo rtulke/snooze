@@ -9,7 +9,7 @@ Rules-Requires-Root: no
 
 Package: snooze
 Architecture: all
-Depends: ${misc:Depends}, python3
+Depends: ${misc:Depends}, python3 (>= 3.8)
 Recommends: bash-completion
 Description: temporarily mute Zabbix hosts and hostgroups
  snooze creates and removes time-boxed Zabbix Maintenance windows via the

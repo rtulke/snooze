@@ -11,6 +11,11 @@ ansible-playbook -i inventory.yml upgrade.yml -e snooze_duration=4h
 ansible-playbook -i inventory.yml upgrade.yml --check     # dry run, touches nothing
 ```
 
+`--check` is a real rehearsal, not a skipped step: the mute and unmute calls still
+run, with snooze's own `--dry-run` appended. So a check run proves the token works
+and the host is known to Zabbix — the two things most likely to be misconfigured —
+without creating a single maintenance window.
+
 ## Where snooze runs
 
 By default on the **controller**, not on the target:
@@ -57,6 +62,9 @@ alert on everything at once, right when someone is trying to look at it. Set
 | `upgrade_reboot` | `auto` | `auto` \| `always` \| `never` |
 | `upgrade_autoremove` | `true` | Remove orphaned packages (apt) |
 | `upgrade_reboot_timeout` | `600` | Seconds to wait for a host to come back |
+
+`snooze_duration` is capped at 365 days by snooze itself; anything longer is
+rejected as a typo.
 
 ## Host names
 

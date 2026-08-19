@@ -58,22 +58,22 @@
     # Mute. A failure here (host unknown to Zabbix, API down) aborts before any
     # package is touched — upgrading while believing you are muted is worse
     # than not upgrading.
+    #
+    # Under --check the very same call runs with snooze's own --dry-run
+    # (check_mode: false lets it execute, the flag keeps it harmless). A dry
+    # run therefore still proves the token works and the host is known to
+    # Zabbix, instead of skipping the one step most likely to be misconfigured.
     - name: Mute the host in Zabbix
       ansible.builtin.command:
-        argv:
-          - "{{ snooze_bin }}"
-          - --json
-          - mute
-          - "{{ snooze_duration }}"
-          - --reason
-          - "{{ snooze_reason }}"
-          - -Y
-          - --
-          - "{{ snooze_target }}"
+        argv: >-
+          {{ [snooze_bin, '--json']
+             + (['--dry-run'] if ansible_check_mode else [])
+             + ['mute', snooze_duration, '--reason', snooze_reason,
+                '-Y', '--', snooze_target] }}
       delegate_to: "{{ snooze_delegate }}"
       become: false
-      changed_when: true
-      when: not ansible_check_mode
+      check_mode: false
+      changed_when: not ansible_check_mode
 
     - name: Upgrade, reboot, unmute
       block:
@@ -195,16 +195,19 @@
         # that already expired on its own during a long upgrade.
         - name: Unmute the host in Zabbix
           ansible.builtin.command:
-            argv: ["{{ snooze_bin }}", "--json", "unmute", "--", "{{ snooze_target }}"]
+            argv: >-
+              {{ [snooze_bin, '--json']
+                 + (['--dry-run'] if ansible_check_mode else [])
+                 + ['unmute', '--', snooze_target] }}
           delegate_to: "{{ snooze_delegate }}"
           become: false
+          check_mode: false
           register: snooze_unmute
-          changed_when: snooze_unmute.rc == 0
+          changed_when: snooze_unmute.rc == 0 and not ansible_check_mode
           failed_when: false
           # `| bool` on both: -e snooze_unmute_on_failure=true hands over the
           # string "true", and a `when` that evaluates to a string is an error.
           when:
-            - not ansible_check_mode
             - not (snooze_upgrade_failed | default(false) | bool)
               or (snooze_unmute_on_failure | bool)
 
@@ -218,6 +221,7 @@
               upgrade finished — consider raising snooze_duration
               (currently {{ snooze_duration }}).
           when:
+            - not ansible_check_mode
             - snooze_unmute.rc is defined
             - snooze_unmute.rc != 0
             - (snooze_unmute.stdout | from_json).results
@@ -233,6 +237,7 @@
               {{ snooze_target }} may still be muted; lift it with:
               snooze unmute {{ snooze_target }}
           when:
+            - not ansible_check_mode
             - snooze_unmute.rc is defined
             - snooze_unmute.rc != 0
             - (snooze_unmute.stdout | from_json).results

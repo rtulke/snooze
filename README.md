@@ -25,7 +25,7 @@ starts, exit codes, packaging internals, and security notes, see
 
 ## Requirements
 
-- Python 3
+- Python 3.8 or newer
 - Network access to your Zabbix API
 - A Zabbix API token
 

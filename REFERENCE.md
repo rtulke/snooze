@@ -54,8 +54,20 @@ lang =       # default: automatic based on the system locale
 | `-Y`, `--yes`       | Skip the confirmation prompt for many targets                                |
 | `--reason TEXT`     | Set the reason (overrides config; `{user}`/`{host}` allowed)                 |
 | `--json`            | Print one JSON document instead of text (see [JSON output](#json-output))   |
+| `-n`, `--dry-run`   | Show what would happen without changing anything in Zabbix                  |
 
 Everything after `--` is treated as a target, even if it starts with `-`.
+
+`--dry-run` still resolves targets and looks up existing windows, so an unknown
+host or a missing window is reported exactly as in a real run — only the calls that
+create, update or delete a maintenance window are held back. In text output every
+line is prefixed with `would:`; in JSON both the envelope and each row carry
+`"dry_run": true`.
+
+```bash
+snooze --dry-run 2h 'prd-mail-*'     # which hosts would this actually hit?
+snooze -n unmute "@Servers/Linux"
+```
 
 Piped/redirected input is read automatically, even without `-F -`: whenever stdin isn't
 a TTY, `snooze` reads it the same way `-F -` would and adds whatever targets it finds to
@@ -87,9 +99,11 @@ The envelope is the same for every command:
   "version": "2.3",
   "command": "mute",
   "ok": true,
+  "dry_run": false,
   "results": [
     {
       "target": "prd-mail-5.domain.tld",
+      "type": "host",
       "result": "ok",
       "message": "muted until 2026-08-19 12:35",
       "action": "muted",
@@ -104,9 +118,23 @@ The envelope is the same for every command:
 }
 ```
 
-`ok` mirrors the exit code (`true` = 0). `results` holds one object per target for
+`ok` mirrors the exit code (`true` = 0), and `dry_run` says whether anything was
+actually changed. `results` holds one object per target for
 `mute`/`plan`/`extend`/`unmute`/`cleanup`, and one row per item for the `list`
 commands.
+
+**Every row has `target` and `type`** (`host` or `group`), whatever the command —
+so the same expression works everywhere:
+
+```bash
+snooze --json list hosts   | jq -r '.results[].target'
+snooze --json list active  | jq -r '.results[].target'
+```
+
+> Changed in 2.4: `list hosts` and `list groups` used to emit `host` and `group`
+> instead of `target`. Rows produced by an action (`mute`, `unmute`, `extend`,
+> `cleanup`) additionally carry `result` and `dry_run`; rows that are pure data
+> (the `list` commands) do not.
 
 **Field names and values are language-independent.** `snooze` prints German or
 English depending on the locale, but only the `message` field changes with it —
@@ -136,7 +164,13 @@ A failure that stops the whole run puts the code at the top level instead:
 | `api_error` | The Zabbix API rejected the call or was unreachable |
 | `config` | No token, or an unreadable config file |
 | `usage` | Bad arguments (exit code 2) |
+| `internal` | An unexpected exception — please report it |
 | `aborted` | Interrupted with Ctrl-C (exit code 130) |
+
+`config` also covers a numeric setting that isn't a number (`retries`, `timeout`,
+`confirm_threshold`) and a `url` that is neither `http://` nor `https://`. An
+unexpected exception is reported as `internal` rather than a traceback, so a
+`--json` run always produces a document a script can read.
 
 Timestamps come in pairs: a Unix integer (`until`) for arithmetic, and a local ISO
 8601 string with UTC offset (`until_iso`) for logs and humans.
@@ -191,6 +225,10 @@ Format: `<number><suffix>`.
 | `M`         | Months (30 days)     |
 
 Examples: `30m`, `30min`, `4h`, `2d`, `1w`, `1M`. If no duration is given, `3h` applies.
+
+The maximum is **365 days**. Anything longer is refused as a typo — a window that
+should genuinely never end belongs in a permanent Zabbix maintenance window, not in
+a snooze.
 
 > **Note:** lowercase `m` (and `min`) are minutes, uppercase `M` is a month.
 
@@ -352,6 +390,11 @@ The plan is to inject the token via Ansible Vault (`vault_zabbix_token`) and rot
 from there. Since the script reads `SNOOZE_TOKEN`/`ZABBIX_TOKEN` from the environment,
 the token can in the future also be supplied without any file at all (e.g. via
 `EnvironmentFile`).
+
+`url` must start with `http://` or `https://`; anything else is rejected. A plain
+`http://` endpoint sends the API token unencrypted and produces a warning on stderr
+on every run — it stays allowed for lab setups, but stderr is deliberately noisy
+about it so it doesn't go unnoticed in production.
 
 ## Installation details
 

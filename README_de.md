@@ -25,7 +25,7 @@ Starts, Exit-Codes, Packaging-Interna und Sicherheitshinweise stehen in
 
 ## Voraussetzungen
 
-- Python 3
+- Python 3.8 oder neuer
 - Netzwerkzugriff auf deine Zabbix-API
 - Ein Zabbix-API-Token
 

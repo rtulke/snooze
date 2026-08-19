@@ -1,4 +1,4 @@
-.TH SNOOZE 1 "2026-08-15" "snooze 2.3" "User Commands"
+.TH SNOOZE 1 "2026-08-15" "snooze 2.4" "User Commands"
 .SH NAME
 snooze \- temporarily mute Zabbix hosts and hostgroups
 .SH SYNOPSIS
@@ -163,6 +163,12 @@ scripts keep working whatever locale
 .B snooze
 runs under; the localized text is carried along in
 .IR message .
+.TP
+.BR \-n ", " \-\-dry\-run
+Show what would happen without changing anything in Zabbix. Targets are still
+resolved and existing windows still looked up, so this catches an unknown host
+or a missing window exactly as a real run would \- only the calls that create,
+update or delete a maintenance window are held back.
 .PP
 Everything after a bare
 .B \-\-

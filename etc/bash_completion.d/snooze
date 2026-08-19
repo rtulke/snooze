@@ -42,7 +42,7 @@ _snooze() {
     local subcommands="mute plan unmute extend list status cleanup prune help version"
     local top_flags="-h --help -V --version"
     local durations="30m 30min 1h 3h 4h 12h 1d 2d 1w 1M"
-    local options="-Y --yes -F --file --reason --json"
+    local options="-Y --yes -F --file --reason --json -n --dry-run"
     local cmd="${COMP_WORDS[1]}"
 
     # First word: a subcommand, a top-level flag (-h/--help/-V/--version -
