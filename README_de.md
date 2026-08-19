@@ -126,3 +126,20 @@ Ist das erste Token ein bekanntes Kommando, wird dieses ausgeführt; andernfalls
 gesamte Eingabe als Argumente für `mute` — `snooze 2h host1` und `snooze mute 2h host1`
 sind also dasselbe. Alle Options-Flags, Ziel-Syntax, `snooze plan`-Zeitformate,
 durchgerechnete Beispiele und der Rest stehen in **[REFERENZ_de.md](REFERENZ_de.md)**.
+
+## Skripting
+
+`--json` gibt statt Text ein einziges JSON-Dokument aus, mit sprachunabhängigen
+Feldnamen — ein Skript bricht also nicht, wenn sich die Locale des Hosts ändert:
+
+```bash
+snooze --json 2h prd-mail-5
+snooze --json list active | jq -r '.results[] | "\(.target) noch \(.remaining)s"'
+```
+
+Einzelheiten und die vollständige Feldreferenz stehen in
+**[REFERENZ_de.md → JSON-Ausgabe](REFERENZ_de.md#json-ausgabe)**.
+
+Ein fertiges Ansible-Playbook, das einen Host mutet, seine Pakete aktualisiert und ihn
+anschließend wieder aufweckt — für Debian, RPM, SUSE, Arch und Alpine — liegt in
+**[examples/ansible/](examples/ansible/)**.

@@ -3,10 +3,6 @@ snooze.conf
 etc/snooze.conf
 .env
 
-# Local AI-assistant project notes — not part of the public repo
-CLAUDE.md
-.claude/
-
 # Python
 __pycache__/
 *.pyc

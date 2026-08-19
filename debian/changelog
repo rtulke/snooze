@@ -1,3 +1,12 @@
+snooze (2.3-1) unstable; urgency=medium
+
+  * Add --json: one machine-readable document on stdout instead of text,
+    with language-independent field names so scripts survive a locale change.
+  * Add an example Ansible playbook that mutes a host, upgrades its packages
+    and unmutes it again, covering apt, dnf, yum, zypper, pacman and apk.
+
+ -- Robert Tulke <rt@ttyS0.sh>  Wed, 19 Aug 2026 09:40:00 +0200
+
 snooze (2.2-1) unstable; urgency=medium
 
   * Read targets from stdin automatically when stdin is not a TTY.

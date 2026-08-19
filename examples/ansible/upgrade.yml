@@ -1,0 +1,239 @@
+---
+# Rolling package upgrade with the host's Zabbix alerts muted while it runs.
+#
+#   ansible-playbook -i inventory.yml upgrade.yml
+#   ansible-playbook -i inventory.yml upgrade.yml -l web01
+#   ansible-playbook -i inventory.yml upgrade.yml -e snooze_duration=4h
+#
+# snooze runs on the *controller*, not on the target (see snooze_delegate below),
+# so the Zabbix API token stays in one place instead of on every server.
+#
+# If the upgrade fails, the host deliberately stays muted — a half-upgraded box
+# would otherwise alert on everything at once. The mute is time-boxed, so it
+# lifts by itself even if this playbook never gets to unmute it.
+
+- name: Upgrade packages with Zabbix alerts muted
+  hosts: "{{ upgrade_hosts | default('all') }}"
+  become: true
+  serial: "{{ upgrade_serial | default(1) }}"
+  # Abort the rollout instead of marching through the whole fleet after the
+  # first host breaks.
+  max_fail_percentage: "{{ upgrade_max_fail_percentage | default(0) }}"
+
+  vars:
+    # Where snooze runs. 'localhost' = the Ansible controller, which needs
+    # snooze installed and a token in ~/.snooze.conf or $SNOOZE_TOKEN. Set this
+    # to '{{ inventory_hostname }}' to run it on each target instead.
+    snooze_delegate: localhost
+    snooze_bin: snooze
+    # The name Zabbix knows this host by. snooze appends the configured domain
+    # to names without a dot, so short inventory names usually work as-is.
+    # Override per host with `snooze_target: <zabbix host name>` if your
+    # inventory names and Zabbix names differ.
+    snooze_target: "{{ inventory_hostname }}"
+    # Must comfortably outlast the upgrade *including* the reboot.
+    snooze_duration: 1h
+    snooze_reason: "Package upgrade (Ansible, {user}@{host})"
+    # Unmute even when the upgrade failed. Off by default on purpose.
+    snooze_unmute_on_failure: false
+
+    # Upgrade behaviour
+    # auto = reboot only if the system says it needs one
+    # always / never = do or don't, regardless
+    upgrade_reboot: auto
+    upgrade_autoremove: true
+    upgrade_reboot_timeout: 600
+
+  tasks:
+    # Preflight: fail on a broken token now, not after muting half the fleet.
+    - name: Check that snooze can reach the Zabbix API
+      ansible.builtin.command:
+        argv: ["{{ snooze_bin }}", "--json", "list", "active"]
+      delegate_to: "{{ snooze_delegate }}"
+      become: false
+      run_once: true
+      changed_when: false
+      check_mode: false
+
+    # Mute. A failure here (host unknown to Zabbix, API down) aborts before any
+    # package is touched — upgrading while believing you are muted is worse
+    # than not upgrading.
+    - name: Mute the host in Zabbix
+      ansible.builtin.command:
+        argv:
+          - "{{ snooze_bin }}"
+          - --json
+          - mute
+          - "{{ snooze_duration }}"
+          - --reason
+          - "{{ snooze_reason }}"
+          - -Y
+          - --
+          - "{{ snooze_target }}"
+      delegate_to: "{{ snooze_delegate }}"
+      become: false
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Upgrade, reboot, unmute
+      block:
+        # Package upgrade, one task per package manager. ansible_facts.pkg_mgr
+        # picks the right one; everything else is skipped.
+        - name: Upgrade packages (apt — Debian, Ubuntu, Raspberry Pi OS)
+          ansible.builtin.apt:
+            update_cache: true
+            cache_valid_time: 3600
+            upgrade: dist
+            autoremove: "{{ upgrade_autoremove }}"
+          when: ansible_facts.pkg_mgr == 'apt'
+
+        - name: Upgrade packages (dnf — Fedora, RHEL 8+, Rocky, Alma)
+          ansible.builtin.dnf:
+            name: "*"
+            state: latest  # noqa package-latest - a full upgrade is the point here
+            update_cache: true
+          when: ansible_facts.pkg_mgr in ['dnf', 'dnf5']
+
+        - name: Upgrade packages (yum — RHEL 7, CentOS 7)
+          ansible.builtin.yum:
+            name: "*"
+            state: latest  # noqa package-latest
+            update_cache: true
+          when: ansible_facts.pkg_mgr == 'yum'
+
+        # The three below need the community.general collection:
+        #   ansible-galaxy collection install community.general
+        - name: Upgrade packages (zypper — openSUSE, SLES)
+          community.general.zypper:
+            name: "*"
+            state: latest  # noqa package-latest
+          when: ansible_facts.pkg_mgr == 'zypper'
+
+        - name: Upgrade packages (pacman — Arch)
+          community.general.pacman:
+            update_cache: true
+            upgrade: true
+          when: ansible_facts.pkg_mgr == 'pacman'
+
+        - name: Upgrade packages (apk — Alpine)
+          community.general.apk:
+            available: true
+            state: latest  # noqa package-latest
+            upgrade: true
+          when: ansible_facts.pkg_mgr == 'apk'
+
+        - name: Fail on an unsupported package manager
+          ansible.builtin.fail:
+            msg: >-
+              No upgrade task for pkg_mgr '{{ ansible_facts.pkg_mgr }}'.
+              Add one above, or skip this host.
+          when: ansible_facts.pkg_mgr not in
+                ['apt', 'dnf', 'dnf5', 'yum', 'zypper', 'pacman', 'apk']
+
+        # Reboot, if the system asks for one.
+        - name: Check whether a reboot is required (Debian family)
+          ansible.builtin.stat:
+            path: /var/run/reboot-required
+          register: snooze_deb_reboot
+          when:
+            - upgrade_reboot == 'auto'
+            - ansible_facts.pkg_mgr == 'apt'
+
+        - name: Check whether a reboot is required (RPM family)
+          ansible.builtin.command:
+            argv: [needs-restarting, -r]
+          register: snooze_rpm_reboot
+          changed_when: false
+          # 0 = no reboot needed, 1 = reboot needed, 127 = tool not installed
+          # (dnf-utils / yum-utils). Anything else is a real error.
+          failed_when: snooze_rpm_reboot.rc not in [0, 1, 127]
+          when:
+            - upgrade_reboot == 'auto'
+            - ansible_facts.pkg_mgr in ['dnf', 'dnf5', 'yum']
+
+        - name: Note that reboot detection is unavailable
+          ansible.builtin.debug:
+            msg: >-
+              needs-restarting is missing (install dnf-utils or yum-utils) —
+              not rebooting. Use -e upgrade_reboot=always to force one.
+          when:
+            - snooze_rpm_reboot.rc is defined
+            - snooze_rpm_reboot.rc == 127
+
+        - name: Reboot
+          ansible.builtin.reboot:
+            reboot_timeout: "{{ upgrade_reboot_timeout }}"
+            msg: "Rebooting after package upgrade (Ansible)"
+          when: >-
+            upgrade_reboot == 'always'
+            or (upgrade_reboot == 'auto'
+                and ((snooze_deb_reboot.stat.exists | default(false) | bool)
+                     or (snooze_rpm_reboot.rc | default(0)) == 1))
+
+      rescue:
+        - name: Remember that the upgrade failed
+          ansible.builtin.set_fact:
+            snooze_upgrade_failed: true
+
+        - name: Report that the host stays muted
+          ansible.builtin.debug:
+            msg: >-
+              Upgrade failed on {{ inventory_hostname }} — leaving it muted so a
+              half-upgraded host doesn't alert on everything at once. The mute
+              expires by itself after {{ snooze_duration }}; to lift it now:
+              snooze unmute {{ snooze_target }}
+          when: not (snooze_unmute_on_failure | bool)
+
+        - name: Fail the host
+          ansible.builtin.fail:
+            msg: "Upgrade failed on {{ inventory_hostname }} — see the error above."
+
+      always:
+        # Unmute. Runs after success, and after failure only when explicitly
+        # asked for. A non-zero exit is reported but doesn't fail the play: by
+        # this point the upgrade is done, and the most common cause is a mute
+        # that already expired on its own during a long upgrade.
+        - name: Unmute the host in Zabbix
+          ansible.builtin.command:
+            argv: ["{{ snooze_bin }}", "--json", "unmute", "--", "{{ snooze_target }}"]
+          delegate_to: "{{ snooze_delegate }}"
+          become: false
+          register: snooze_unmute
+          changed_when: snooze_unmute.rc == 0
+          failed_when: false
+          # `| bool` on both: -e snooze_unmute_on_failure=true hands over the
+          # string "true", and a `when` that evaluates to a string is an error.
+          when:
+            - not ansible_check_mode
+            - not (snooze_upgrade_failed | default(false) | bool)
+              or (snooze_unmute_on_failure | bool)
+
+        # --json makes this distinguishable: "no_active_entry" just means the
+        # mute had already expired during a long upgrade, which is harmless.
+        # Any other error means the host may still be muted.
+        - name: Report a mute that had already expired
+          ansible.builtin.debug:
+            msg: >-
+              The mute on {{ snooze_target }} had already expired before the
+              upgrade finished — consider raising snooze_duration
+              (currently {{ snooze_duration }}).
+          when:
+            - snooze_unmute.rc is defined
+            - snooze_unmute.rc != 0
+            - (snooze_unmute.stdout | from_json).results
+              | map(attribute='error') | select('eq', 'no_active_entry') | list | length > 0
+
+        - name: Report an unmute that didn't work
+          ansible.builtin.debug:
+            msg: >-
+              snooze unmute exited {{ snooze_unmute.rc }} —
+              {{ (snooze_unmute.stdout | from_json).message
+                 | default((snooze_unmute.stdout | from_json).results
+                           | map(attribute='message') | join('; '), true) }}.
+              {{ snooze_target }} may still be muted; lift it with:
+              snooze unmute {{ snooze_target }}
+          when:
+            - snooze_unmute.rc is defined
+            - snooze_unmute.rc != 0
+            - (snooze_unmute.stdout | from_json).results
+              | map(attribute='error') | select('eq', 'no_active_entry') | list | length == 0

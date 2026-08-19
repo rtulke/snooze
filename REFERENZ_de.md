@@ -7,6 +7,7 @@ siehe [README_de.md](README_de.md) — dieses Dokument deckt den Rest ab.
 
 - [Sprache](#sprache)
 - [Optionen](#optionen)
+- [JSON-Ausgabe](#json-ausgabe)
 - [Geplanter Start (`snooze plan`)](#geplanter-start-snooze-plan)
 - [Dauer](#dauer)
 - [Ziele](#ziele)
@@ -52,6 +53,7 @@ lang =       # Standard: automatisch anhand der System-Locale
 | `-F`, `--file DATEI`| Ziele aus DATEI lesen (ein Token je Zeile, `#` = Kommentar; `-` = stdin) |
 | `-Y`, `--yes`       | Sicherheitsabfrage bei vielen Zielen überspringen                       |
 | `--reason TEXT`     | Grund setzen (überschreibt Config; `{user}`/`{host}` erlaubt)           |
+| `--json`            | Ergebnis als ein JSON-Dokument statt als Text ([JSON-Ausgabe](#json-ausgabe)) |
 
 Alles nach `--` wird als Ziel behandelt, auch wenn es mit `-` beginnt.
 
@@ -66,6 +68,84 @@ echo host1 host2 host3 | snooze          # alle drei für die Standard-Dauer mut
 echo host1 host2 host3 | snooze 2h       # ... für 2h
 zabbix-get-my-broken-hosts | snooze unmute
 ```
+
+## JSON-Ausgabe
+
+`--json` macht aus der Ausgabe ein einziges JSON-Dokument auf stdout — und sonst
+nichts, auch im Fehlerfall. Damit lässt sich `snooze` gefahrlos aus Skripten,
+Ansible oder allem anderen ansteuern, das sonst menschenlesbaren Text parsen müsste.
+
+```bash
+snooze --json 2h prd-mail-5
+snooze --json list active | jq -r '.results[] | "\(.target) noch \(.remaining)s"'
+snooze --json list suppressed | jq '.results[] | select(.count > 0)'
+```
+
+Der Rahmen ist bei jedem Kommando gleich:
+
+```json
+{
+  "version": "2.3",
+  "command": "mute",
+  "ok": true,
+  "results": [
+    {
+      "target": "prd-mail-5.domain.tld",
+      "result": "ok",
+      "message": "gemutet bis 2026-08-19 12:35",
+      "action": "muted",
+      "maintenance": "snooze:prd-mail-5.domain.tld",
+      "since": 1787124955,
+      "since_iso": "2026-08-19T09:35:55+0200",
+      "until": 1787135755,
+      "until_iso": "2026-08-19T12:35:55+0200",
+      "reason": "rt@admin01"
+    }
+  ]
+}
+```
+
+`ok` entspricht dem Exit-Code (`true` = 0). In `results` steht bei
+`mute`/`plan`/`extend`/`unmute`/`cleanup` ein Objekt je Ziel, bei den
+`list`-Kommandos eine Zeile je Eintrag.
+
+**Feldnamen und Werte sind sprachunabhängig.** `snooze` gibt je nach Locale Deutsch
+oder Englisch aus, aber nur das Feld `message` ändert sich dadurch — `result`,
+`error`, `action` und sämtliche Zeitstempel bleiben gleich. Ein Skript, das unter
+`LC_ALL=en_US` geschrieben wurde, funktioniert also auch auf einem Host mit
+`de_DE`. Immer auf `error` prüfen, nie auf `message`.
+
+Fehler nutzen denselben Rahmen. Ein Fehler bei einem einzelnen Ziel steht in
+`results`:
+
+```json
+{"target": "weg.domain.tld", "result": "error",
+ "error": "no_active_entry", "message": "kein aktiver snooze-Eintrag"}
+```
+
+Ein Fehler, der den ganzen Lauf abbricht, steht stattdessen auf oberster Ebene:
+
+```json
+{"version": "2.3", "command": "list active", "ok": false,
+ "error": "config", "message": "Kein Token gesetzt — ...", "results": []}
+```
+
+| `error` | Bedeutung |
+|---------|-----------|
+| `not_found` | Host oder Hostgruppe in Zabbix unbekannt |
+| `no_active_entry` | Für dieses Ziel existiert kein snooze-Fenster |
+| `no_match` | Ein Glob oder Regex hat nichts getroffen |
+| `api_error` | Die Zabbix-API hat abgelehnt oder war nicht erreichbar |
+| `config` | Kein Token oder eine nicht lesbare Config-Datei |
+| `usage` | Falsche Argumente (Exit-Code 2) |
+| `aborted` | Mit Strg-C abgebrochen (Exit-Code 130) |
+
+Zeitstempel kommen paarweise: als Unix-Integer (`until`) zum Rechnen und als lokale
+ISO-8601-Zeichenkette mit UTC-Offset (`until_iso`) für Logs und Menschen.
+
+Da eine Rückfrage das Dokument zerstören würde, fragt `--json` nie nach — oberhalb
+von `confirm_threshold` Zielen also `-Y` mitgeben, wie bei jedem anderen nicht
+interaktiven Lauf.
 
 ## Geplanter Start (`snooze plan`)
 

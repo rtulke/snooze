@@ -1,0 +1,26 @@
+---
+# Minimal inventory for upgrade.yml.
+#
+# The names here are what snooze passes to Zabbix, so they should match your
+# Zabbix host names. Short names get the domain from snooze.conf appended
+# automatically, so `web01` becomes `web01.domain.tld`.
+#
+# If a host is called something else in Zabbix, set snooze_target for it.
+
+all:
+  children:
+    debian_servers:
+      hosts:
+        web01:
+        web02:
+        db01:
+          # Inventory name and Zabbix name differ for this one
+          snooze_target: db01-prod.example.com
+
+    rhel_servers:
+      hosts:
+        app01:
+        app02:
+
+  vars:
+    ansible_user: ansible

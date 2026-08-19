@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
-VERSION = "2.2"
+VERSION = "2.3"
 AUTHOR = "Robert Tulke, rt@ttyS0.sh"
 
 ## Language
@@ -214,11 +214,52 @@ def tr(key: str, **kwargs) -> str:
     return MSG[key][LANG].format(**kwargs)
 
 
-def _print_ok(target: str, msg: str):
+## Machine-readable output (--json)
+#
+# With --json nothing human-readable goes to stdout: every command collects
+# its rows in _ROWS and one JSON document is written at the end. The keys are
+# deliberately language-independent - the whole point is that scripts don't
+# have to parse output that changes with the locale. Localized text is still
+# carried along in "message" for people reading logs, but the machine-facing
+# fields ("result", "error", timestamps) never change.
+
+JSON_MODE = False
+JSON_COMMAND = ""
+_ROWS = []
+
+
+def _iso(ts) -> str:
+    """Unix timestamp as local ISO 8601, including the UTC offset."""
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(int(ts)))
+
+
+def _row(**fields):
+    _ROWS.append(fields)
+
+
+def emit_json(ok: bool, error: str = None, message: str = None, **extra):
+    """Writes the single JSON document a --json run produces."""
+    doc = {"version": VERSION, "command": JSON_COMMAND, "ok": ok}
+    if error:
+        doc["error"] = error
+    if message:
+        doc["message"] = message
+    doc.update(extra)
+    doc["results"] = _ROWS
+    print(json.dumps(doc, ensure_ascii=False, indent=2))
+
+
+def _print_ok(target: str, msg: str, **fields):
+    if JSON_MODE:
+        _row(target=target, result="ok", message=msg, **fields)
+        return
     print(f"{tr('lbl_ok'):<8}{target}  {msg}")
 
 
-def _print_err(target: str, msg: str):
+def _print_err(target: str, msg: str, error: str = "error", **fields):
+    if JSON_MODE:
+        _row(target=target, result="error", error=error, message=msg, **fields)
+        return
     print(f"{tr('lbl_err'):<8}{target}  {msg}")
 
 
@@ -272,7 +313,7 @@ def load_config() -> dict:
             try:
                 parser.read(path)
             except configparser.Error as exc:
-                die(tr("cfg_unreadable", path=path, exc=exc))
+                die(tr("cfg_unreadable", path=path, exc=exc), error="config")
             if parser.has_section("snooze"):
                 for key in DEFAULTS:
                     if parser.has_option("snooze", key):
@@ -532,11 +573,15 @@ def list_hosts() -> int:
     """Lists all hosts from Zabbix (technical name + visible name)."""
     res = zabbix("host.get", {"output": ["host", "name"]})
     if not res:
-        print(tr("no_hosts_found"))
+        if not JSON_MODE:
+            print(tr("no_hosts_found"))
         return 0
     for h in sorted(res, key=lambda x: x["host"].lower()):
         host = h["host"]
         name = h.get("name", "")
+        if JSON_MODE:
+            _row(host=host, name=name)
+            continue
         print(f"{host}  ({name})" if name and name != host else host)
     return 0
 
@@ -545,9 +590,13 @@ def list_hostgroups() -> int:
     """Lists all hostgroups from Zabbix."""
     res = zabbix("hostgroup.get", {"output": ["name"]})
     if not res:
-        print(tr("no_groups_found"))
+        if not JSON_MODE:
+            print(tr("no_groups_found"))
         return 0
     for g in sorted(res, key=lambda x: x["name"].lower()):
+        if JSON_MODE:
+            _row(group=g["name"])
+            continue
         print(g["name"])
     return 0
 
@@ -618,14 +667,16 @@ def run_snooze(duration_str, hosts, groups=None, reason=None, since=None) -> int
         for h in hosts:
             hid = host_ids.get(h)
             if not hid:
-                _print_err(h, tr("not_in_zabbix"))
+                _print_err(h, tr("not_in_zabbix"), error="not_found")
                 failed += 1
                 continue
             try:
                 _upsert_maintenance(CONFIG["prefix"] + h, since, end, secs, reason, hosts=[hid])
-                _print_ok(h, status)
+                _print_ok(h, status, action="planned" if since > now else "muted",
+                          maintenance=CONFIG["prefix"] + h, since=since, since_iso=_iso(since),
+                          until=end, until_iso=_iso(end), reason=reason)
             except ZabbixError as exc:
-                _print_err(h, str(exc))
+                _print_err(h, str(exc), error="api_error")
                 failed += 1
 
     if groups:
@@ -633,14 +684,17 @@ def run_snooze(duration_str, hosts, groups=None, reason=None, since=None) -> int
         for g in groups:
             gid = group_ids.get(g)
             if not gid:
-                _print_err(f"@{g}", tr("group_not_in_zabbix"))
+                _print_err(f"@{g}", tr("group_not_in_zabbix"), error="not_found")
                 failed += 1
                 continue
             try:
                 _upsert_maintenance(CONFIG["prefix"] + "@" + g, since, end, secs, reason, groups=[gid])
-                _print_ok(f"@{g}", tr("group_status", status=status))
+                _print_ok(f"@{g}", tr("group_status", status=status),
+                          action="planned" if since > now else "muted",
+                          maintenance=CONFIG["prefix"] + "@" + g, since=since, since_iso=_iso(since),
+                          until=end, until_iso=_iso(end), reason=reason)
             except ZabbixError as exc:
-                _print_err(f"@{g}", str(exc))
+                _print_err(f"@{g}", str(exc), error="api_error")
                 failed += 1
 
     return 1 if failed else 0
@@ -657,7 +711,7 @@ def run_extend(duration_str, hosts, groups=None) -> int:
         nonlocal failed
         existing = get_maintenance(name)
         if not existing:
-            _print_err(label, tr("no_active_entry"))
+            _print_err(label, tr("no_active_entry"), error="no_active_entry")
             failed += 1
             return
         base = max(int(existing["active_till"]), now)
@@ -674,9 +728,12 @@ def run_extend(duration_str, hosts, groups=None) -> int:
                     "period": new_period,
                 }],
             })
-            _print_ok(label, tr("extended_until", end=end_label))
+            _print_ok(label, tr("extended_until", end=end_label), action="extended",
+                      maintenance=name, maintenanceid=existing["maintenanceid"],
+                      until=new_end, until_iso=_iso(new_end),
+                      previous_until=int(existing["active_till"]))
         except ZabbixError as exc:
-            _print_err(label, str(exc))
+            _print_err(label, str(exc), error="api_error")
             failed += 1
 
     for h in hosts:
@@ -694,14 +751,15 @@ def run_wakeup(hosts, groups=None) -> int:
         nonlocal failed
         existing = get_maintenance(name)
         if not existing:
-            _print_err(label, tr("no_active_entry"))
+            _print_err(label, tr("no_active_entry"), error="no_active_entry")
             failed += 1
             return
         try:
             zabbix("maintenance.delete", [existing["maintenanceid"]])
-            _print_ok(label, tr("woken"))
+            _print_ok(label, tr("woken"), action="unmuted", maintenance=name,
+                      maintenanceid=existing["maintenanceid"])
         except ZabbixError as exc:
-            _print_err(label, str(exc))
+            _print_err(label, str(exc), error="api_error")
             failed += 1
 
     for h in hosts:
@@ -745,13 +803,20 @@ def run_status() -> int:
     now = int(time.time())
     items = [m for m in _snooze_maintenances() if int(m["active_since"]) <= now]
     if not items:
-        print(tr("no_active_entries"))
+        if not JSON_MODE:
+            print(tr("no_active_entries"))
         return 0
     for m in sorted(items, key=lambda x: x["name"].lower()):
         target = m["name"][len(CONFIG["prefix"]):]
         till = int(m["active_till"])
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(till))
         reason = m.get("description", "")
+        if JSON_MODE:
+            _row(target=target, maintenanceid=m["maintenanceid"], maintenance=m["name"],
+                 since=int(m["active_since"]), since_iso=_iso(m["active_since"]),
+                 until=till, until_iso=_iso(till), remaining=max(0, till - now),
+                 expired=till <= now, reason=reason)
+            continue
         suffix = f"  [{reason}]" if reason else ""
         print(f"{target:<30}{_format_remaining(till - now):<16}({tr('word_until')} {when}){suffix}")
     return 0
@@ -762,7 +827,8 @@ def run_plans() -> int:
     now = int(time.time())
     items = [m for m in _snooze_maintenances() if int(m["active_since"]) > now]
     if not items:
-        print(tr("no_planned_entries"))
+        if not JSON_MODE:
+            print(tr("no_planned_entries"))
         return 0
     for m in sorted(items, key=lambda x: int(x["active_since"])):
         target = m["name"][len(CONFIG["prefix"]):]
@@ -771,6 +837,11 @@ def run_plans() -> int:
         since_label = time.strftime("%Y-%m-%d %H:%M", time.localtime(since))
         till_label = time.strftime("%Y-%m-%d %H:%M", time.localtime(till))
         reason = m.get("description", "")
+        if JSON_MODE:
+            _row(target=target, maintenanceid=m["maintenanceid"], maintenance=m["name"],
+                 since=since, since_iso=_iso(since), until=till, until_iso=_iso(till),
+                 starts_in=max(0, since - now), reason=reason)
+            continue
         suffix = f"  [{reason}]" if reason else ""
         print(f"{target:<30}{tr('word_starts')} {since_label:<18}{tr('word_until')} {till_label}{suffix}")
     return 0
@@ -781,15 +852,22 @@ def run_cleanup() -> int:
     now = int(time.time())
     expired = [m for m in _snooze_maintenances() if int(m["active_till"]) <= now]
     if not expired:
-        print(tr("no_expired_entries"))
+        if not JSON_MODE:
+            print(tr("no_expired_entries"))
         return 0
     try:
         zabbix("maintenance.delete", [m["maintenanceid"] for m in expired])
     except ZabbixError as exc:
-        die(tr("cleanup_failed", exc=exc))
+        die(tr("cleanup_failed", exc=exc), error="api_error")
     for m in sorted(expired, key=lambda x: x["name"].lower()):
+        if JSON_MODE:
+            _row(target=m["name"][len(CONFIG["prefix"]):], result="ok", action="removed",
+                 maintenanceid=m["maintenanceid"], maintenance=m["name"],
+                 until=int(m["active_till"]), until_iso=_iso(m["active_till"]))
+            continue
         print(f"{tr('removed')}  {m['name'][len(CONFIG['prefix']):]}")
-    print(tr("cleanup_summary", count=len(expired)))
+    if not JSON_MODE:
+        print(tr("cleanup_summary", count=len(expired)))
     return 0
 
 
@@ -843,6 +921,19 @@ def suppressed_problems(maintenanceid: str, hostids=None, groupids=None) -> list
 def _print_suppressed(label: str, maintenanceid: str, hostids=None, groupids=None):
     """Prints one line per suppressed problem, or a 'none' notice."""
     problems = suppressed_problems(maintenanceid, hostids=hostids, groupids=groupids)
+    if JSON_MODE:
+        _row(target=label, maintenanceid=maintenanceid, count=len(problems), problems=[
+            {
+                "eventid": p.get("eventid"),
+                "name": p.get("name"),
+                "severity": int(p.get("severity", 0)),
+                "severity_label": SEVERITY_LABELS["en"].get(str(p.get("severity")), ""),
+                "clock": int(p["clock"]),
+                "clock_iso": _iso(p["clock"]),
+            }
+            for p in problems
+        ])
+        return
     if not problems:
         print(f"{label}  {tr('no_suppressed')}")
         return
@@ -863,7 +954,8 @@ def run_suppressed(hosts, groups=None) -> int:
     if not hosts and not groups:
         items = sorted(_snooze_maintenances(), key=lambda x: x["name"].lower())
         if not items:
-            print(tr("no_active_entries"))
+            if not JSON_MODE:
+                print(tr("no_active_entries"))
             return 0
         targets = [m["name"][len(CONFIG["prefix"]):] for m in items]
         host_names = [t for t in targets if not t.startswith("@")]
@@ -884,12 +976,12 @@ def run_suppressed(hosts, groups=None) -> int:
         for h in hosts:
             hid = host_ids.get(h)
             if not hid:
-                _print_err(h, tr("not_in_zabbix"))
+                _print_err(h, tr("not_in_zabbix"), error="not_found")
                 failed += 1
                 continue
             existing = get_maintenance(CONFIG["prefix"] + h)
             if not existing:
-                _print_err(h, tr("no_active_entry"))
+                _print_err(h, tr("no_active_entry"), error="no_active_entry")
                 failed += 1
                 continue
             _print_suppressed(h, existing["maintenanceid"], hostids=[hid])
@@ -899,12 +991,12 @@ def run_suppressed(hosts, groups=None) -> int:
         for g in groups:
             gid = group_ids.get(g)
             if not gid:
-                _print_err(f"@{g}", tr("group_not_in_zabbix"))
+                _print_err(f"@{g}", tr("group_not_in_zabbix"), error="not_found")
                 failed += 1
                 continue
             existing = get_maintenance(CONFIG["prefix"] + "@" + g)
             if not existing:
-                _print_err(f"@{g}", tr("no_active_entry"))
+                _print_err(f"@{g}", tr("no_active_entry"), error="no_active_entry")
                 failed += 1
                 continue
             _print_suppressed(f"@{g}", existing["maintenanceid"], groupids=[gid])
@@ -937,7 +1029,7 @@ def confirm(count: int, yes: bool) -> bool:
     threshold = int(CONFIG["confirm_threshold"])
     if yes or count <= threshold:
         return True
-    if not sys.stdin.isatty():
+    if JSON_MODE or not sys.stdin.isatty():
         die(tr("confirm_need_yes", count=count, threshold=threshold), code=2)
     answer = input(tr("confirm_prompt", count=count)).strip().lower()
     return answer in ("j", "ja", "y", "yes")
@@ -967,6 +1059,7 @@ Optionen:
   -F, --file DATEI                Ziele aus DATEI lesen (ein Token/Zeile, - = stdin)
   -Y, --yes                       Sicherheitsabfrage bei vielen Zielen überspringen
       --reason TEXT               Grund (überschreibt Config; {{user}}/{{host}} erlaubt)
+      --json                      Ergebnis als JSON statt als Text ausgeben
 
 Geplanter Start (snooze plan ZEIT [DAUER] [ZIELE…]):
   HH:MM                           Heute; Fehler, falls die Uhrzeit heute schon vorbei ist
@@ -1009,6 +1102,7 @@ Options:
   -F, --file FILE                 Read targets from FILE (one token/line, - = stdin)
   -Y, --yes                       Skip the confirmation prompt for many targets
       --reason TEXT               Set the reason (overrides config; {{user}}/{{host}} allowed)
+      --json                      Print the result as JSON instead of text
 
 Scheduled start (snooze plan TIME [DURATION] [TARGETS…]):
   HH:MM                           Today; error if that time has already passed today
@@ -1032,15 +1126,21 @@ Targets:
 HELP = HELP_DE if LANG == "de" else HELP_EN
 
 
-def die(msg: str, code: int = 1):
+def die(msg: str, code: int = 1, error: str = None):
+    if JSON_MODE:
+        # Consumers get parseable output even when the run fails outright.
+        emit_json(False, error=error or ("usage" if code == 2 else "error"),
+                  message=str(msg))
+        sys.exit(code)
     print(f"snooze: {msg}", file=sys.stderr)
     sys.exit(code)
 
 
 def extract_flags(args: list) -> tuple:
-    """Extracts options (-F/--file, -Y/--yes, --reason).
+    """Extracts options (-F/--file, -Y/--yes, --reason, --json).
 
     Returns (positionals, {file, yes, reason}). Everything after '--' is positional."""
+    global JSON_MODE
     opts = {"file": None, "yes": False, "reason": None}
     pos = []
     i = 0
@@ -1051,6 +1151,8 @@ def extract_flags(args: list) -> tuple:
             break
         elif a in ("-Y", "--yes"):
             opts["yes"] = True
+        elif a == "--json":
+            JSON_MODE = True
         elif a in ("-F", "--file"):
             if i + 1 >= len(args):
                 die(tr("flag_need_filename", flag=a), code=2)
@@ -1092,7 +1194,7 @@ def _finish_mute(duration: str, target_tokens: list, opts: dict, since=None) -> 
     host_tokens, groups = split_targets(target_tokens)
     hosts, missing = expand_host_patterns(host_tokens)
     for pat in missing:
-        _print_err(pat, tr("no_pattern_match"))
+        _print_err(pat, tr("no_pattern_match"), error="no_match")
     if not hosts and not groups and not missing:
         hosts = [local_fqdn()]
     if not confirm(len(hosts) + len(groups), opts["yes"]):
@@ -1128,7 +1230,7 @@ def run_extend_cmd(tokens: list, opts: dict) -> int:
     host_tokens, groups = split_targets(target_tokens)
     hosts, missing = expand_host_patterns(host_tokens)
     for pat in missing:
-        _print_err(pat, tr("no_pattern_match"))
+        _print_err(pat, tr("no_pattern_match"), error="no_match")
     if not hosts and not groups and not missing:
         hosts = [local_fqdn()]
     rc = run_extend(duration, hosts, groups)
@@ -1140,7 +1242,7 @@ def run_unmute(tokens: list, opts: dict) -> int:
     host_tokens, groups = split_targets(target_tokens)
     hosts, missing = expand_host_patterns(host_tokens)
     for pat in missing:
-        _print_err(pat, tr("no_pattern_match"))
+        _print_err(pat, tr("no_pattern_match"), error="no_match")
     if not hosts and not groups and not missing:
         hosts = [local_fqdn()]
     rc = run_wakeup(hosts, groups)
@@ -1152,7 +1254,7 @@ def run_list_suppressed(tokens: list) -> int:
     host_tokens, groups = split_targets(tokens)
     hosts, missing = expand_host_patterns(host_tokens)
     for pat in missing:
-        _print_err(pat, tr("no_pattern_match"))
+        _print_err(pat, tr("no_pattern_match"), error="no_match")
     rc = run_suppressed(hosts, groups)
     return 1 if missing else rc
 
@@ -1173,26 +1275,49 @@ def run_list(subargs: list) -> int:
     die(tr("list_need_subcmd"), code=2)
 
 
+# Every command the dispatch below recognizes. A first token that isn't one of
+# these is treated as a target for an implicit mute.
+KNOWN_COMMANDS = ("mute", "plan", "extend", "unmute", "list", "status",
+                  "cleanup", "prune")
+
+
 def main(argv: list) -> int:
-    global CONFIG
+    global CONFIG, JSON_COMMAND
     CONFIG = load_config()
     apply_lang_override(CONFIG)
 
     positionals, opts = extract_flags(argv[1:])
     cmd = positionals[0] if positionals else ""
+    # Labels the JSON document with the command that produced it. Anything
+    # unrecognized is an implicit mute, same as in the dispatch below.
+    JSON_COMMAND = cmd if cmd in KNOWN_COMMANDS else "mute"
+    if JSON_COMMAND == "prune":               # alias for 'cleanup'
+        JSON_COMMAND = "cleanup"
+    elif JSON_COMMAND == "status":            # alias for 'list active'
+        JSON_COMMAND = "list active"
+    elif JSON_COMMAND == "list" and len(positionals) > 1:
+        JSON_COMMAND = f"list {positionals[1]}"
 
     # help/version never need a configured token - checked before the token
     # gate below, so 'snooze --help' works even with no config/token at all.
     if cmd in ("-h", "--help", "help"):
+        if JSON_MODE:
+            JSON_COMMAND = "help"
+            _row(help=HELP)
+            return 0
         print(HELP)
         return 0
     if cmd in ("-V", "--version", "version"):
+        if JSON_MODE:
+            JSON_COMMAND = "version"
+            _row(version=VERSION, author=AUTHOR)
+            return 0
         print(f"snooze {VERSION}")
         print(AUTHOR)
         return 0
 
     if not CONFIG["token"]:
-        die(tr("no_token"))
+        die(tr("no_token"), error="config")
 
     if not positionals and not opts["file"]:
         return run_mute([], opts)
@@ -1222,8 +1347,11 @@ CONFIG = {}  # populated in main(); default for direct function calls/tests
 
 if __name__ == "__main__":
     try:
-        sys.exit(main(sys.argv))
+        code = main(sys.argv)
+        if JSON_MODE:
+            emit_json(code == 0)
+        sys.exit(code)
     except ZabbixError as exc:
-        die(str(exc))
+        die(str(exc), error="api_error")
     except KeyboardInterrupt:
-        die(tr("aborted"), code=130)
+        die(tr("aborted"), code=130, error="aborted")

@@ -1,4 +1,4 @@
-.TH SNOOZE 1 "2026-08-15" "snooze 2.2" "User Commands"
+.TH SNOOZE 1 "2026-08-15" "snooze 2.3" "User Commands"
 .SH NAME
 snooze \- temporarily mute Zabbix hosts and hostgroups
 .SH SYNOPSIS
@@ -154,6 +154,15 @@ default.
 and
 .I {host}
 placeholders are substituted at runtime.
+.TP
+.B \-\-json
+Print one JSON document on standard output instead of human-readable text,
+and nothing else \- including on failure. Field names and the
+.IR result ", " error " and timestamp values are language-independent, so"
+scripts keep working whatever locale
+.B snooze
+runs under; the localized text is carried along in
+.IR message .
 .PP
 Everything after a bare
 .B \-\-

@@ -125,3 +125,20 @@ If the first token is a known command, that command runs; otherwise the entire i
 treated as arguments to `mute` — so `snooze 2h host1` and `snooze mute 2h host1` are the
 same thing. Full option flags, target syntax, `snooze plan` time formats, worked
 examples, and everything else live in **[REFERENCE.md](REFERENCE.md)**.
+
+## Scripting
+
+`--json` prints one JSON document instead of text, with language-independent field
+names — so a script doesn't break when the host's locale changes:
+
+```bash
+snooze --json 2h prd-mail-5
+snooze --json list active | jq -r '.results[] | "\(.target) \(.remaining)s left"'
+```
+
+Details and the full field reference are in
+**[REFERENCE.md → JSON output](REFERENCE.md#json-output)**.
+
+A ready-made Ansible playbook that mutes a host, upgrades its packages and unmutes it
+again — for Debian, RPM, SUSE, Arch and Alpine systems — is in
+**[examples/ansible/](examples/ansible/)**.
