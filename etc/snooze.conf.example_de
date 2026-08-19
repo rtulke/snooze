@@ -55,6 +55,6 @@ lang =
 # TLS-Zertifikat des API-Endpunkts prüfen. Nur abschalten für ein Zabbix mit
 # selbstsigniertem Zertifikat, das sich nicht ins System-Trust-Store aufnehmen
 # lässt - der API-Token geht dann über eine nicht authentifizierte Verbindung,
-# und snooze warnt bei jedem Lauf auf stderr. Besser: CA ins Trust-Store
-# aufnehmen oder SSL_CERT_FILE darauf zeigen lassen.
+# ohne Hinweis zur Laufzeit. Besser: CA ins Trust-Store aufnehmen oder
+# SSL_CERT_FILE darauf zeigen lassen.
 ssl_verify = true

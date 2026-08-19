@@ -1,3 +1,17 @@
+snooze (2.9-1) unstable; urgency=medium
+
+  * Make --help and --version work when the config file has a syntax error.
+    load_config() ran before them and died on the way, so a typo in the file
+    took away the very output that says where the file lives. They now load
+    the config best-effort, still honouring 'lang' when it is readable; every
+    other command keeps failing loudly.
+  * Drop the per-run warning about ssl_verify being off. It is a deliberate,
+    documented setting, and repeating it on every invocation only trains
+    people to ignore stderr. The http:// warning stays: that one is usually
+    an oversight rather than a decision.
+
+ -- Robert Tulke <rt@ttyS0.sh>  Wed, 19 Aug 2026 23:00:00 +0200
+
 snooze (2.8-1) unstable; urgency=medium
 
   * Refuse a first token that is a near-miss of a command instead of treating

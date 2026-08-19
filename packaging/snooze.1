@@ -1,4 +1,4 @@
-.TH SNOOZE 1 "2026-08-15" "snooze 2.8" "User Commands"
+.TH SNOOZE 1 "2026-08-15" "snooze 2.9" "User Commands"
 .SH NAME
 snooze \- temporarily mute Zabbix hosts and hostgroups
 .SH SYNOPSIS
@@ -307,9 +307,8 @@ Keys:
 .BR true )
 checks the TLS certificate of the API endpoint. Turning it off exists for a Zabbix
 whose self-signed certificate cannot be added to the system trust store; the API
-token then travels over an unauthenticated connection, so
-.B snooze
-prints a warning on standard error on every run while it is set. Adding the CA to
+token then travels over an unauthenticated connection, with nothing at runtime to
+remind you. Adding the CA to
 the trust store, or pointing
 .I SSL_CERT_FILE
 at it, is preferable.

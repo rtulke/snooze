@@ -55,7 +55,7 @@ lang =
 
 # Verify the TLS certificate of the API endpoint. Only turn this off for a
 # Zabbix with a self-signed certificate you cannot add to the system trust
-# store - the API token then travels over an unauthenticated connection, and
-# snooze warns on stderr on every run while it is off. Prefer adding the CA to
-# the trust store, or pointing SSL_CERT_FILE at it.
+# store - the API token then travels over an unauthenticated connection, with
+# nothing at runtime to remind you. Prefer adding the CA to the trust store, or
+# pointing SSL_CERT_FILE at it.
 ssl_verify = true

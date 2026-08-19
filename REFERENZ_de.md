@@ -401,8 +401,8 @@ Token künftig auch ganz ohne Datei (z. B. via `EnvironmentFile`) bereitgestellt
 
 `ssl_verify = false` schaltet die TLS-Zertifikatsprüfung ab — gedacht für ein Zabbix,
 dessen selbstsigniertes Zertifikat sich nicht ins System-Trust-Store aufnehmen
-lässt. Der Token geht dann über eine Verbindung, die niemand authentifiziert hat;
-solange das gesetzt ist, warnt snooze bei jedem Lauf auf stderr. Ein Zertifikat,
+lässt. Der Token geht dann über eine Verbindung, die niemand authentifiziert hat.
+Es ist eine bewusste Einstellung, zur Laufzeit erinnert nichts daran. Ein Zertifikat,
 das die Prüfung nicht besteht, wird als Konfigurationsfehler mit Ursache gemeldet
 und nie wiederholt — einen Handshake zu wiederholen, der nicht gelingen kann,
 verzögert nur denselben Fehler.

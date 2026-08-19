@@ -120,9 +120,9 @@ Three ways out, best first:
    verification entirely.
 
 Option 3 means the API token is sent over a connection nobody has authenticated,
-so anyone able to intercept it can take the token. `snooze` therefore prints a
-warning on stderr on every run while it is active. Use it for lab setups, not for
-the host that manages production maintenance windows.
+so anyone able to intercept it can take the token. It is a deliberate setting and
+`snooze` does not nag about it at runtime — which is exactly why it belongs in a
+lab setup rather than on the host that manages production maintenance windows.
 
 ## Usage
 

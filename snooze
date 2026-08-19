@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
-VERSION = "2.8"
+VERSION = "2.9"
 AUTHOR = "Robert Tulke, rt@ttyS0.sh"
 
 ## Language
@@ -237,12 +237,6 @@ MSG = {
         "de": "Config-Wert {setting}={value!r} muss true oder false sein.",
         "en": "Config value {setting}={value!r} must be true or false.",
     },
-    "cfg_insecure_tls": {
-        "de": "Warnung: ssl_verify ist aus — TLS-Zertifikate werden NICHT geprüft. "
-              "Der API-Token ist damit gegen Man-in-the-Middle ungeschützt.",
-        "en": "Warning: ssl_verify is off — TLS certificates are NOT verified. "
-              "The API token is unprotected against man-in-the-middle attacks.",
-    },
     "cfg_legacy_insecure": {
         "de": "Warnung: 'insecure' heißt jetzt 'ssl_verify' (umgekehrte Bedeutung) — "
               "bitte 'ssl_verify = {value}' eintragen.",
@@ -414,8 +408,12 @@ ENV_OVERRIDES = {
 }
 
 
-def load_config() -> dict:
+def load_config(strict: bool = True) -> dict:
     """Reads defaults < first readable config file < environment variables.
+
+    strict=False is what --help/--version use: a config file with a syntax
+    error is exactly the moment someone reaches for the help, so those two
+    fall back to the defaults instead of dying on the way there.
 
     A file that exists but can't be read (wrong owner, missing ACL) is skipped
     with a warning rather than silently swallowing the ones below it -
@@ -435,7 +433,9 @@ def load_config() -> dict:
         try:
             parser.read(path)
         except configparser.Error as exc:
-            die(tr("cfg_unreadable", path=path, exc=exc), error="config")
+            if strict:
+                die(tr("cfg_unreadable", path=path, exc=exc), error="config")
+            break
         if parser.has_section("snooze"):
             for key in DEFAULTS:
                 if parser.has_option("snooze", key):
@@ -516,11 +516,6 @@ def check_url(cfg: dict):
         # A warning, not an error - a lab Zabbix over plain HTTP is legitimate.
         # Goes to stderr so --json keeps stdout to itself.
         print(f"snooze: {tr('cfg_insecure_url')}", file=sys.stderr)
-    elif not cfg_bool("ssl_verify"):
-        # Turning verification off is a deliberate choice, but it must never be
-        # a quiet one - an unverified TLS session hands the token to whoever
-        # answers.
-        print(f"snooze: {tr('cfg_insecure_tls')}", file=sys.stderr)
 
 
 def apply_lang_override(cfg: dict):
@@ -1612,11 +1607,16 @@ def suggest_command(token: str, candidates=ALL_COMMANDS):
 
 def main(argv: list) -> int:
     global CONFIG, JSON_COMMAND, SSL_CONTEXT
-    CONFIG = load_config()
-    apply_lang_override(CONFIG)
 
     positionals, opts = extract_flags(argv[1:])
     cmd = positionals[0] if positionals else ""
+    # Everything past the help/version branch needs a usable config; those two
+    # do not. They get a best-effort load that still honours 'lang' when the
+    # file is readable and falls back to the defaults when it isn't - a broken
+    # config file is exactly when someone reaches for the help.
+    strict = cmd not in ("-h", "--help", "help", "-V", "--version", "version")
+    CONFIG = load_config(strict=strict)
+    apply_lang_override(CONFIG)
     # Labels the JSON document with the command that produced it. Anything
     # unrecognized is an implicit mute, same as in the dispatch below.
     JSON_COMMAND = cmd if cmd in KNOWN_COMMANDS else "mute"
@@ -1627,8 +1627,6 @@ def main(argv: list) -> int:
     elif JSON_COMMAND == "list" and len(positionals) > 1:
         JSON_COMMAND = f"list {positionals[1]}"
 
-    # help/version never need a configured token - checked before the token
-    # gate below, so 'snooze --help' works even with no config/token at all.
     if cmd in ("-h", "--help", "help"):
         if JSON_MODE:
             JSON_COMMAND = "help"

@@ -122,9 +122,10 @@ wiederholen, die nie zustande kommen kann. Drei Auswege, der beste zuerst:
    die Prüfung ganz abzuschalten.
 
 Variante 3 heißt: Der API-Token geht über eine Verbindung, die niemand
-authentifiziert hat — wer sie abfangen kann, bekommt den Token. `snooze` warnt
-deshalb bei jedem Lauf auf stderr, solange das aktiv ist. Für Laborumgebungen
-geeignet, nicht für den Host, der produktive Wartungsfenster verwaltet.
+authentifiziert hat — wer sie abfangen kann, bekommt den Token. Es ist eine
+bewusste Einstellung, und `snooze` mahnt zur Laufzeit nicht daran — genau deshalb
+gehört sie in eine Laborumgebung und nicht auf den Host, der produktive
+Wartungsfenster verwaltet.
 
 ## Verwendung
 
