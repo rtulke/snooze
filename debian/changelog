@@ -1,3 +1,20 @@
+snooze (2.5-1) unstable; urgency=medium
+
+  * Report a TLS certificate that fails verification as a configuration fault
+    naming the likely cause and the ways out, instead of a raw urlopen error,
+    and stop retrying a handshake that cannot succeed.
+  * Add the 'insecure' setting (SNOOZE_INSECURE) to skip certificate
+    verification for a Zabbix whose self-signed certificate can't be added to
+    the system trust store. It warns on stderr on every run while set.
+  * Skip a config file that exists but can't be read, with a warning, instead
+    of letting it mask the files below it. configparser ignores unopenable
+    files silently, so an unreadable /etc/snooze.conf looked exactly like a
+    missing token and no lower-priority file was ever tried.
+  * Name the config file actually in use when no token is set, rather than
+    always pointing at /etc/snooze.conf.
+
+ -- Robert Tulke <rt@ttyS0.sh>  Wed, 19 Aug 2026 14:00:00 +0200
+
 snooze (2.4-1) unstable; urgency=medium
 
   * Add -n/--dry-run: resolve targets and look up windows as usual, but hold

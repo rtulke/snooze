@@ -80,6 +80,11 @@ Settings live in an INI file. The **first readable** file from this list wins:
 
 Template: `/etc/snooze.conf.example`
 
+The first file that exists wins outright — settings are never merged across files.
+One that exists but can't be read (wrong owner, missing ACL) is skipped with a
+warning on stderr and the search continues, so a `/etc/snooze.conf` you have no
+access to can't mask a working `~/.snooze.conf`.
+
 | Key                 | Meaning                                                      | Default                                       |
 |---------------------|----------------------------------------------------------------|-----------------------------------------------|
 | `url`               | Endpoint of the Zabbix JSON-RPC API                            | `https://zabbix.domain.tld/api_jsonrpc.php`   |
@@ -92,14 +97,32 @@ Template: `/etc/snooze.conf.example`
 | `reason`            | Comment per window; `{user}`/`{host}` get substituted            | `{user}@{host}`                               |
 | `confirm_threshold` | How many targets before confirming (`-Y` skips it)               | `10`                                          |
 | `lang`              | Output language: `de`/`en`. Empty = system locale                | empty (automatic)                             |
+| `insecure`          | Skip TLS certificate verification (see below)                    | `false`                                        |
 
 Every value can additionally be overridden via environment variable:
 `SNOOZE_URL`, `SNOOZE_TOKEN`, `SNOOZE_DOMAIN`, `SNOOZE_DURATION`, `SNOOZE_PREFIX`,
-`SNOOZE_TIMEOUT`, `SNOOZE_RETRIES`, `SNOOZE_REASON`, `SNOOZE_CONFIRM_THRESHOLD`, `SNOOZE_LANG`.
+`SNOOZE_TIMEOUT`, `SNOOZE_RETRIES`, `SNOOZE_REASON`, `SNOOZE_CONFIRM_THRESHOLD`, `SNOOZE_LANG`,
+`SNOOZE_INSECURE`.
 `ZABBIX_TOKEN` / `ZABBIX_URL` are also accepted for token and URL (vault-friendly).
 
 How the `de`/`en` auto-detection actually works (which `LC_*` wins, which locales count
 as German) is in **[REFERENCE.md → Language](REFERENCE.md#language)**.
+
+### TLS certificates
+
+If your Zabbix uses a self-signed certificate or an internal CA, `snooze` fails with
+a message naming the cause rather than retrying a connection that can never succeed.
+Three ways out, best first:
+
+1. Add the CA to the system trust store — everything on the host benefits.
+2. Point `SSL_CERT_FILE` at the CA file, for this tool only.
+3. Set `insecure = true` in the config (or `SNOOZE_INSECURE=1`) to skip verification
+   entirely.
+
+Option 3 means the API token is sent over a connection nobody has authenticated,
+so anyone able to intercept it can take the token. `snooze` therefore prints a
+warning on stderr on every run while it is active. Use it for lab setups, not for
+the host that manages production maintenance windows.
 
 ## Usage
 

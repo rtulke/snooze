@@ -391,6 +391,13 @@ from there. Since the script reads `SNOOZE_TOKEN`/`ZABBIX_TOKEN` from the enviro
 the token can in the future also be supplied without any file at all (e.g. via
 `EnvironmentFile`).
 
+`insecure = true` disables TLS certificate verification for a Zabbix whose
+self-signed certificate can't be added to the system trust store. The token then
+travels over a connection nobody has authenticated, so a warning goes to stderr on
+every run while it is set. A certificate that fails verification is reported as a
+configuration fault naming the cause, and is never retried — retrying a handshake
+that cannot succeed only delays the same error.
+
 `url` must start with `http://` or `https://`; anything else is rejected. A plain
 `http://` endpoint sends the API token unencrypted and produces a warning on stderr
 on every run — it stays allowed for lab setups, but stderr is deliberately noisy

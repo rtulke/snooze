@@ -13,7 +13,7 @@
 # Einzelne Werte lassen sich zusätzlich per Umgebungsvariable überschreiben:
 #   SNOOZE_URL / ZABBIX_URL, SNOOZE_TOKEN / ZABBIX_TOKEN, SNOOZE_DOMAIN,
 #   SNOOZE_DURATION, SNOOZE_PREFIX, SNOOZE_TIMEOUT, SNOOZE_REASON,
-#   SNOOZE_CONFIRM_THRESHOLD, SNOOZE_RETRIES, SNOOZE_LANG
+#   SNOOZE_CONFIRM_THRESHOLD, SNOOZE_RETRIES, SNOOZE_LANG, SNOOZE_INSECURE
 # (ZABBIX_TOKEN/ZABBIX_URL sind Vault-/Secrets-freundlich.)
 
 [snooze]
@@ -51,3 +51,9 @@ confirm_threshold = 10
 # Sprache der Ausgaben: 'de' oder 'en'. Leer (Standard) = automatisch anhand
 # der System-Locale (LC_ALL/LC_MESSAGES/LANG) erkennen.
 lang =
+
+# TLS-Zertifikatsprüfung abschalten. Nur für ein Zabbix mit selbstsigniertem
+# Zertifikat, das sich nicht ins System-Trust-Store aufnehmen lässt - der
+# API-Token geht dann über eine nicht authentifizierte Verbindung, und snooze
+# warnt bei jedem Lauf auf stderr. Besser: CA ins Trust-Store, oder SSL_CERT_FILE.
+#insecure = false
