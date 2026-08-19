@@ -1,3 +1,15 @@
+snooze (2.8-1) unstable; urgency=medium
+
+  * Refuse a first token that is a near-miss of a command instead of treating
+    it as a host to mute. "snooze lists" quietly tried to mute lists.<domain>,
+    and the same rule turned "snooze unmut web01" into muting web01 rather
+    than waking it - a typo produced the opposite action. Such a token now
+    ends in a usage error naming the likely command, with 'snooze mute NAME'
+    given as the way to target a host that really is called that. Mistyped
+    'list' subcommands get the same treatment.
+
+ -- Robert Tulke <rt@ttyS0.sh>  Wed, 19 Aug 2026 22:30:00 +0200
+
 snooze (2.7-1) unstable; urgency=medium
 
   * Ignore reverse-DNS names when determining the local host. On a machine

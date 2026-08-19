@@ -151,6 +151,12 @@ gesamte Eingabe als Argumente für `mute` — `snooze 2h host1` und `snooze mute
 sind also dasselbe. Alle Options-Flags, Ziel-Syntax, `snooze plan`-Zeitformate,
 durchgerechnete Beispiele und der Rest stehen in **[REFERENZ_de.md](REFERENZ_de.md)**.
 
+Ein erstes Token, das einem Kommandonamen sehr ähnlich sieht, wird abgelehnt statt
+gemutet: `snooze lists` fragt nach, ob `list` gemeint war, statt stillschweigend
+`lists.domain.tld` zu muten. Dieselbe Regel verhindert, dass `snooze unmut web01`
+den Host mutet, wo er aufgeweckt werden sollte. Für einen Host, der wirklich so
+heißt, `mute` ausdrücklich angeben: `snooze mute lists`.
+
 ## Skripting
 
 `--json` gibt statt Text ein einziges JSON-Dokument aus, mit sprachunabhängigen

@@ -2,6 +2,7 @@
 """snooze — temporarily mute Zabbix hosts and hostgroups via Maintenance mode."""
 
 import configparser
+import difflib
 import fnmatch
 import getpass
 import json
@@ -15,7 +16,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
-VERSION = "2.7"
+VERSION = "2.8"
 AUTHOR = "Robert Tulke, rt@ttyS0.sh"
 
 ## Language
@@ -197,6 +198,16 @@ MSG = {
     "extend_need_duration": {
         "de": "extend: bitte eine Dauer angeben, z. B. 'snooze extend 2h host1'.",
         "en": "extend: please provide a duration, e.g. 'snooze extend 2h host1'.",
+    },
+    "typo_command": {
+        "de": "Unbekanntes Kommando {cmd!r} — meintest du {suggestion!r}? "
+              "Ist {cmd!r} wirklich ein Host, dann 'snooze mute {cmd}' verwenden.",
+        "en": "Unknown command {cmd!r} — did you mean {suggestion!r}? "
+              "If {cmd!r} really is a host, use 'snooze mute {cmd}'.",
+    },
+    "typo_subcommand": {
+        "de": "list: unbekannt {sub!r} — meintest du {suggestion!r}?",
+        "en": "list: unknown {sub!r} — did you mean {suggestion!r}?",
     },
     "list_need_subcmd": {
         "de": "list: bitte 'hosts', 'groups', 'active', 'plans' oder 'suppressed' angeben.",
@@ -1573,6 +1584,9 @@ def run_list(subargs: list) -> int:
         return run_plans()
     if what == "suppressed":
         return run_list_suppressed(subargs[1:])
+    suggestion = suggest_command(what, LIST_SUBCOMMANDS) if what else None
+    if suggestion:
+        die(tr("typo_subcommand", sub=what, suggestion=suggestion), code=2)
     die(tr("list_need_subcmd"), code=2)
 
 
@@ -1580,6 +1594,20 @@ def run_list(subargs: list) -> int:
 # these is treated as a target for an implicit mute.
 KNOWN_COMMANDS = ("mute", "plan", "extend", "unmute", "list", "status",
                   "cleanup", "prune")
+LIST_SUBCOMMANDS = ("hosts", "groups", "active", "plans", "suppressed")
+# Everything a first token could legitimately be, for the typo check below.
+ALL_COMMANDS = KNOWN_COMMANDS + ("help", "version")
+
+
+def suggest_command(token: str, candidates=ALL_COMMANDS):
+    """The command a mistyped token most likely meant, or None.
+
+    A first token that isn't a command is treated as a target for an implicit
+    mute - which turns 'snooze unmut web01' into muting web01 rather than
+    waking it. A near-miss of a command name is far more likely a typo than a
+    hostname, so it is worth refusing instead of acting on the guess."""
+    match = difflib.get_close_matches(token, candidates, n=1, cutoff=0.8)
+    return match[0] if match else None
 
 
 def main(argv: list) -> int:
@@ -1643,6 +1671,10 @@ def main(argv: list) -> int:
         return run_list(["active"])
     if cmd in ("cleanup", "prune"):
         return run_cleanup()
+
+    suggestion = suggest_command(cmd)
+    if suggestion:
+        die(tr("typo_command", cmd=cmd, suggestion=suggestion), code=2)
 
     # No known command -> implicit mute (positionals as targets).
     return run_mute(positionals, opts)

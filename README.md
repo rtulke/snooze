@@ -149,6 +149,12 @@ treated as arguments to `mute` — so `snooze 2h host1` and `snooze mute 2h host
 same thing. Full option flags, target syntax, `snooze plan` time formats, worked
 examples, and everything else live in **[REFERENCE.md](REFERENCE.md)**.
 
+A first token that is a near-miss of a command name is refused rather than muted:
+`snooze lists` asks whether you meant `list` instead of quietly muting
+`lists.domain.tld`. The same rule stops `snooze unmut web01` from muting web01
+when the intent was to wake it. To target a host that genuinely carries such a
+name, say `mute` explicitly: `snooze mute lists`.
+
 ## Scripting
 
 `--json` prints one JSON document instead of text, with language-independent field

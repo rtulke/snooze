@@ -1,4 +1,4 @@
-.TH SNOOZE 1 "2026-08-15" "snooze 2.7" "User Commands"
+.TH SNOOZE 1 "2026-08-15" "snooze 2.8" "User Commands"
 .SH NAME
 snooze \- temporarily mute Zabbix hosts and hostgroups
 .SH SYNOPSIS
@@ -61,7 +61,13 @@ so
 .B "snooze 2h host1"
 and
 .B "snooze mute 2h host1"
-are equivalent. With no arguments at all, the local host's FQDN is muted
+are equivalent \- except that a first token closely resembling a command name is
+refused with a suggestion rather than muted, so a mistyped
+.B unmute
+cannot silently mute the host instead. Use
+.B mute
+explicitly for a host that really carries such a name. With no arguments at all,
+the local host's FQDN is muted
 for the configured default duration.
 .SH COMMANDS
 .TP
