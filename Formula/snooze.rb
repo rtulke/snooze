@@ -1,8 +1,8 @@
 class Snooze < Formula
   desc "Temporarily mute Zabbix hosts and hostgroups"
   homepage "https://github.com/rtulke/snooze"
-  url "https://github.com/rtulke/snooze/archive/refs/tags/v2.7.tar.gz"
-  sha256 "37610a410cbffa5664c0ac9694dfee75e871d737cc180719c12991482645872e"
+  url "https://github.com/rtulke/snooze/archive/refs/tags/v2.8.tar.gz"
+  sha256 "eafa73fd4ba98f32230370c7392b238ab8393df5fdf69114ec5cea0907b896d0"
   license "GPL-3.0-or-later"
   head "https://github.com/rtulke/snooze.git", branch: "main"
 
