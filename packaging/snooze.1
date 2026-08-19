@@ -1,4 +1,4 @@
-.TH SNOOZE 1 "2026-08-15" "snooze 2.5" "User Commands"
+.TH SNOOZE 1 "2026-08-15" "snooze 2.6" "User Commands"
 .SH NAME
 snooze \- temporarily mute Zabbix hosts and hostgroups
 .SH SYNOPSIS
@@ -294,12 +294,14 @@ search continues.
 .PP
 Keys:
 .IR url ", " token ", " domain ", " duration ", " prefix ", " timeout ,
-.IR reason ", " confirm_threshold ", " retries ", " lang ", and " insecure .
+.IR reason ", " confirm_threshold ", " retries ", " lang ", and " ssl_verify .
 .PP
-.I insecure
-turns off TLS certificate verification. It exists for a Zabbix whose self-signed
-certificate cannot be added to the system trust store; the API token then travels
-over an unauthenticated connection, so
+.I ssl_verify
+(default
+.BR true )
+checks the TLS certificate of the API endpoint. Turning it off exists for a Zabbix
+whose self-signed certificate cannot be added to the system trust store; the API
+token then travels over an unauthenticated connection, so
 .B snooze
 prints a warning on standard error on every run while it is set. Adding the CA to
 the trust store, or pointing

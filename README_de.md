@@ -99,12 +99,12 @@ also kein funktionierendes `~/.snooze.conf` verdecken.
 | `reason`            | Kommentar je Fenster; `{user}`/`{host}` werden ersetzt            | `{user}@{host}`                               |
 | `confirm_threshold` | Ab wie vielen Zielen nachgefragt wird (`-Y` überspringt)          | `10`                                          |
 | `lang`              | Sprache der Ausgaben: `de`/`en`. Leer = System-Locale             | leer (automatisch)                            |
-| `insecure`          | TLS-Zertifikatsprüfung abschalten (siehe unten)                   | `false`                                        |
+| `ssl_verify`        | TLS-Zertifikat des API-Endpunkts prüfen (siehe unten)             | `true`                                         |
 
 Jeder Wert lässt sich zusätzlich per Umgebungsvariable überschreiben:
 `SNOOZE_URL`, `SNOOZE_TOKEN`, `SNOOZE_DOMAIN`, `SNOOZE_DURATION`, `SNOOZE_PREFIX`,
 `SNOOZE_TIMEOUT`, `SNOOZE_RETRIES`, `SNOOZE_REASON`, `SNOOZE_CONFIRM_THRESHOLD`, `SNOOZE_LANG`,
-`SNOOZE_INSECURE`.
+`SNOOZE_SSL_VERIFY`.
 Für Token und URL werden auch `ZABBIX_TOKEN` / `ZABBIX_URL` akzeptiert (Vault-freundlich).
 
 Wie die `de`/`en`-Erkennung genau funktioniert (welches `LC_*` gewinnt, welche Locales als
@@ -118,8 +118,8 @@ wiederholen, die nie zustande kommen kann. Drei Auswege, der beste zuerst:
 
 1. Die CA ins System-Trust-Store aufnehmen — davon profitiert alles auf dem Host.
 2. `SSL_CERT_FILE` auf die CA-Datei zeigen lassen, nur für dieses Werkzeug.
-3. `insecure = true` in der Config setzen (oder `SNOOZE_INSECURE=1`), um die
-   Prüfung ganz abzuschalten.
+3. `ssl_verify = false` in der Config setzen (oder `SNOOZE_SSL_VERIFY=false`), um
+   die Prüfung ganz abzuschalten.
 
 Variante 3 heißt: Der API-Token geht über eine Verbindung, die niemand
 authentifiziert hat — wer sie abfangen kann, bekommt den Token. `snooze` warnt

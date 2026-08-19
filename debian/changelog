@@ -1,3 +1,12 @@
+snooze (2.6-1) unstable; urgency=medium
+
+  * Rename the 2.5 'insecure' setting to 'ssl_verify' (default true), so the
+    config reads as a positive statement instead of a double negative. The old
+    name still works, in the file and as SNOOZE_INSECURE, and is translated
+    with a warning naming the replacement.
+
+ -- Robert Tulke <rt@ttyS0.sh>  Wed, 19 Aug 2026 21:00:00 +0200
+
 snooze (2.5-1) unstable; urgency=medium
 
   * Report a TLS certificate that fails verification as a configuration fault

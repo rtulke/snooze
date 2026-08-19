@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
-VERSION = "2.5"
+VERSION = "2.6"
 AUTHOR = "Robert Tulke, rt@ttyS0.sh"
 
 ## Language
@@ -227,21 +227,27 @@ MSG = {
         "en": "Config value {setting}={value!r} must be true or false.",
     },
     "cfg_insecure_tls": {
-        "de": "Warnung: insecure ist gesetzt — TLS-Zertifikate werden NICHT geprüft. "
+        "de": "Warnung: ssl_verify ist aus — TLS-Zertifikate werden NICHT geprüft. "
               "Der API-Token ist damit gegen Man-in-the-Middle ungeschützt.",
-        "en": "Warning: insecure is set — TLS certificates are NOT verified. "
+        "en": "Warning: ssl_verify is off — TLS certificates are NOT verified. "
               "The API token is unprotected against man-in-the-middle attacks.",
+    },
+    "cfg_legacy_insecure": {
+        "de": "Warnung: 'insecure' heißt jetzt 'ssl_verify' (umgekehrte Bedeutung) — "
+              "bitte 'ssl_verify = {value}' eintragen.",
+        "en": "Warning: 'insecure' is now called 'ssl_verify' (inverted meaning) — "
+              "please write 'ssl_verify = {value}' instead.",
     },
     "zbx_tls_verify": {
         "de": "TLS-Zertifikat von {url} nicht überprüfbar: {exc}. Meist ein "
               "selbstsigniertes Zertifikat oder eine interne CA, die dem System "
               "nicht bekannt ist. CA ins System-Trust-Store aufnehmen, "
               "SSL_CERT_FILE auf die CA-Datei zeigen lassen — oder, wenn das "
-              "bewusst hingenommen wird, 'insecure = true' in der Config setzen.",
+              "bewusst hingenommen wird, 'ssl_verify = false' in der Config setzen.",
         "en": "Could not verify the TLS certificate of {url}: {exc}. Usually a "
               "self-signed certificate or an internal CA the system doesn't know. "
               "Add the CA to the system trust store, point SSL_CERT_FILE at the CA "
-              "file — or set 'insecure = true' in the config if that is a "
+              "file — or set 'ssl_verify = false' in the config if that is a "
               "deliberate trade-off.",
     },
     "zbx_tls_error": {
@@ -378,7 +384,7 @@ DEFAULTS = {
     "confirm_threshold": "10",
     "retries": "2",
     "lang": "",
-    "insecure": "false",
+    "ssl_verify": "true",
 }
 
 # Env var -> config key. Multiple aliases per key are possible.
@@ -393,7 +399,7 @@ ENV_OVERRIDES = {
     "confirm_threshold": ("SNOOZE_CONFIRM_THRESHOLD",),
     "retries": ("SNOOZE_RETRIES",),
     "lang": ("SNOOZE_LANG",),
-    "insecure": ("SNOOZE_INSECURE",),
+    "ssl_verify": ("SNOOZE_SSL_VERIFY",),
 }
 
 
@@ -407,6 +413,7 @@ def load_config() -> dict:
     missing token."""
     global CONFIG_FILE
     cfg = dict(DEFAULTS)
+    legacy_insecure = None
     for path in CONFIG_PATHS:
         if not os.path.isfile(path):
             continue
@@ -422,6 +429,12 @@ def load_config() -> dict:
             for key in DEFAULTS:
                 if parser.has_option("snooze", key):
                     cfg[key] = parser.get("snooze", key)
+            # 'insecure' was the 2.5 name for the inverse of 'ssl_verify'.
+            # Accepted so an existing config keeps working; an explicit
+            # ssl_verify always wins.
+            if (parser.has_option("snooze", "insecure")
+                    and not parser.has_option("snooze", "ssl_verify")):
+                legacy_insecure = parser.get("snooze", "insecure")
         CONFIG_FILE = path
         break
     for key, names in ENV_OVERRIDES.items():
@@ -429,6 +442,12 @@ def load_config() -> dict:
             if os.environ.get(name):
                 cfg[key] = os.environ[name]
                 break
+    if os.environ.get("SNOOZE_INSECURE") and not os.environ.get("SNOOZE_SSL_VERIFY"):
+        legacy_insecure = os.environ["SNOOZE_INSECURE"]
+    if legacy_insecure is not None:
+        cfg["ssl_verify"] = "false" if parse_bool(legacy_insecure, "insecure") else "true"
+        print(f"snooze: {tr('cfg_legacy_insecure', value=cfg['ssl_verify'])}",
+              file=sys.stderr)
     return cfg
 
 
@@ -447,14 +466,20 @@ TRUE_VALUES = ("1", "true", "yes", "on", "ja")
 FALSE_VALUES = ("0", "false", "no", "off", "nein", "")
 
 
-def cfg_bool(key: str) -> bool:
-    """Same idea as cfg_int(), for the on/off settings."""
-    raw = str(CONFIG[key]).strip().lower()
+def parse_bool(value, setting: str) -> bool:
+    """Parses an on/off setting. Standalone so load_config() can use it before
+    CONFIG exists."""
+    raw = str(value).strip().lower()
     if raw in TRUE_VALUES:
         return True
     if raw in FALSE_VALUES:
         return False
-    die(tr("cfg_bad_bool", setting=key, value=CONFIG[key]), code=2, error="config")
+    die(tr("cfg_bad_bool", setting=setting, value=value), code=2, error="config")
+
+
+def cfg_bool(key: str) -> bool:
+    """Same idea as cfg_int(), for the on/off settings."""
+    return parse_bool(CONFIG[key], key)
 
 
 def build_ssl_context():
@@ -463,7 +488,7 @@ def build_ssl_context():
     Only 'insecure' produces a context of our own, and it is the one case where
     snooze knowingly gives up certificate checking - hence the warning in
     check_url()."""
-    if not cfg_bool("insecure"):
+    if cfg_bool("ssl_verify"):
         return None
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -480,7 +505,7 @@ def check_url(cfg: dict):
         # A warning, not an error - a lab Zabbix over plain HTTP is legitimate.
         # Goes to stderr so --json keeps stdout to itself.
         print(f"snooze: {tr('cfg_insecure_url')}", file=sys.stderr)
-    elif cfg_bool("insecure"):
+    elif not cfg_bool("ssl_verify"):
         # Turning verification off is a deliberate choice, but it must never be
         # a quiet one - an unverified TLS session hands the token to whoever
         # answers.

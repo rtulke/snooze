@@ -391,13 +391,18 @@ Geplant ist, den Token über Ansible-Vault einzuspeisen (`vault_zabbix_token`) u
 zu rotieren. Da das Skript `SNOOZE_TOKEN`/`ZABBIX_TOKEN` aus der Umgebung liest, kann der
 Token künftig auch ganz ohne Datei (z. B. via `EnvironmentFile`) bereitgestellt werden.
 
-`insecure = true` schaltet die TLS-Zertifikatsprüfung ab — gedacht für ein Zabbix,
+`ssl_verify = false` schaltet die TLS-Zertifikatsprüfung ab — gedacht für ein Zabbix,
 dessen selbstsigniertes Zertifikat sich nicht ins System-Trust-Store aufnehmen
 lässt. Der Token geht dann über eine Verbindung, die niemand authentifiziert hat;
 solange das gesetzt ist, warnt snooze bei jedem Lauf auf stderr. Ein Zertifikat,
 das die Prüfung nicht besteht, wird als Konfigurationsfehler mit Ursache gemeldet
 und nie wiederholt — einen Handshake zu wiederholen, der nicht gelingen kann,
 verzögert nur denselben Fehler.
+
+> In 2.5 hieß die Einstellung `insecure` (mit umgekehrter Bedeutung). Dieser Name
+> wird weiterhin akzeptiert — in der Config-Datei wie als `SNOOZE_INSECURE` — und
+> mit einem Hinweis übersetzt, was stattdessen einzutragen ist. Ein ausdrückliches
+> `ssl_verify` hat immer Vorrang.
 
 `url` muss mit `http://` oder `https://` beginnen; alles andere wird abgelehnt. Ein
 reines `http://` überträgt den API-Token unverschlüsselt und erzeugt bei jedem Lauf

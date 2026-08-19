@@ -391,12 +391,17 @@ from there. Since the script reads `SNOOZE_TOKEN`/`ZABBIX_TOKEN` from the enviro
 the token can in the future also be supplied without any file at all (e.g. via
 `EnvironmentFile`).
 
-`insecure = true` disables TLS certificate verification for a Zabbix whose
+`ssl_verify = false` disables TLS certificate verification for a Zabbix whose
 self-signed certificate can't be added to the system trust store. The token then
 travels over a connection nobody has authenticated, so a warning goes to stderr on
 every run while it is set. A certificate that fails verification is reported as a
 configuration fault naming the cause, and is never retried — retrying a handshake
 that cannot succeed only delays the same error.
+
+> The setting was called `insecure` (with the inverse meaning) in 2.5. That name
+> is still accepted, in the config file and as `SNOOZE_INSECURE`, and translated
+> with a warning telling you what to write instead. An explicit `ssl_verify`
+> always wins over it.
 
 `url` must start with `http://` or `https://`; anything else is rejected. A plain
 `http://` endpoint sends the API token unencrypted and produces a warning on stderr

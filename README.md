@@ -97,12 +97,12 @@ access to can't mask a working `~/.snooze.conf`.
 | `reason`            | Comment per window; `{user}`/`{host}` get substituted            | `{user}@{host}`                               |
 | `confirm_threshold` | How many targets before confirming (`-Y` skips it)               | `10`                                          |
 | `lang`              | Output language: `de`/`en`. Empty = system locale                | empty (automatic)                             |
-| `insecure`          | Skip TLS certificate verification (see below)                    | `false`                                        |
+| `ssl_verify`        | Verify the TLS certificate of the API endpoint (see below)       | `true`                                         |
 
 Every value can additionally be overridden via environment variable:
 `SNOOZE_URL`, `SNOOZE_TOKEN`, `SNOOZE_DOMAIN`, `SNOOZE_DURATION`, `SNOOZE_PREFIX`,
 `SNOOZE_TIMEOUT`, `SNOOZE_RETRIES`, `SNOOZE_REASON`, `SNOOZE_CONFIRM_THRESHOLD`, `SNOOZE_LANG`,
-`SNOOZE_INSECURE`.
+`SNOOZE_SSL_VERIFY`.
 `ZABBIX_TOKEN` / `ZABBIX_URL` are also accepted for token and URL (vault-friendly).
 
 How the `de`/`en` auto-detection actually works (which `LC_*` wins, which locales count
@@ -116,8 +116,8 @@ Three ways out, best first:
 
 1. Add the CA to the system trust store — everything on the host benefits.
 2. Point `SSL_CERT_FILE` at the CA file, for this tool only.
-3. Set `insecure = true` in the config (or `SNOOZE_INSECURE=1`) to skip verification
-   entirely.
+3. Set `ssl_verify = false` in the config (or `SNOOZE_SSL_VERIFY=false`) to skip
+   verification entirely.
 
 Option 3 means the API token is sent over a connection nobody has authenticated,
 so anyone able to intercept it can take the token. `snooze` therefore prints a
