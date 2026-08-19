@@ -234,6 +234,13 @@ a snooze.
 
 ## Targets
 
+With no target at all, `snooze` mutes the machine it runs on. The name is taken
+from `getfqdn()`, falling back to `gethostname()`; loopback names (`localhost`,
+`localhost6`, `ip6-localhost`) and reverse-DNS names (`…in-addr.arpa`,
+`…ip6.arpa`) are skipped, since those identify the machine to itself rather than
+to Zabbix. A short name gets `domain` appended like any other target. If nothing
+usable remains, `snooze` says so instead of guessing.
+
 - **Hosts**: names without a dot automatically get `.domain.tld` appended
   (e.g. `prd-mail-5` becomes `prd-mail-5.domain.tld`). Names with a dot are left unchanged.
 - **Glob**: hostnames may contain `*`, `?` and `[…]` and are resolved against the

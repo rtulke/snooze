@@ -1,3 +1,14 @@
+snooze (2.7-1) unstable; urgency=medium
+
+  * Ignore reverse-DNS names when determining the local host. On a machine
+    whose hostname resolves to ::1, socket.getfqdn() returns the PTR name of
+    the loopback address ("1.0.0.…0.ip6.arpa"), which a bare "snooze" then
+    tried to mute. Reverse-DNS zones and the localhost6/ip6-localhost
+    spellings are now skipped like plain localhost, falling back to
+    gethostname(). Trailing dots and uppercase are normalized too.
+
+ -- Robert Tulke <rt@ttyS0.sh>  Wed, 19 Aug 2026 22:00:00 +0200
+
 snooze (2.6-1) unstable; urgency=medium
 
   * Rename the 2.5 'insecure' setting to 'ssl_verify' (default true), so the

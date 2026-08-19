@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
-VERSION = "2.6"
+VERSION = "2.7"
 AUTHOR = "Robert Tulke, rt@ttyS0.sh"
 
 ## Language
@@ -628,11 +628,32 @@ def fqdn(name: str) -> str:
     return name if "." in name else f"{name}.{CONFIG['domain']}"
 
 
+# Names that identify the machine to itself rather than to the network, and so
+# never name a host in Zabbix. The ip6- and localhost6 spellings come from the
+# /etc/hosts shipped by most distributions.
+LOOPBACK_NAMES = {
+    "localhost", "localhost.localdomain",
+    "localhost6", "localhost6.localdomain6",
+    "ip6-localhost", "ip6-loopback",
+}
+
+# Reverse-DNS zones. socket.getfqdn() falls back to the PTR name of whatever
+# address the hostname resolves to, which on a machine whose name maps to ::1
+# yields "1.0.0.0.…0.ip6.arpa" - a valid name, just not this host's.
+REVERSE_DNS_SUFFIXES = (".in-addr.arpa", ".ip6.arpa")
+
+
+def usable_hostname(name: str) -> bool:
+    """False for anything that names the loopback instead of the machine."""
+    return bool(name) and name not in LOOPBACK_NAMES \
+        and not name.endswith(REVERSE_DNS_SUFFIXES)
+
+
 def local_fqdn() -> str:
-    """Local FQDN, robust against 'localhost'/short names from getfqdn()."""
+    """Local FQDN, robust against the loopback names getfqdn() can return."""
     for candidate in (socket.getfqdn(), socket.gethostname()):
-        candidate = (candidate or "").strip().lower()
-        if candidate and candidate not in ("localhost", "localhost.localdomain"):
+        candidate = (candidate or "").strip().lower().rstrip(".")
+        if usable_hostname(candidate):
             return candidate if "." in candidate else f"{candidate}.{CONFIG['domain']}"
     die(tr("no_local_hostname"))
 

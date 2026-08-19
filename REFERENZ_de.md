@@ -235,6 +235,14 @@ Zabbix, nicht in ein snooze.
 
 ## Ziele
 
+Ohne Ziel mutet `snooze` die Maschine, auf der es läuft. Der Name kommt aus
+`getfqdn()`, ersatzweise aus `gethostname()`; Loopback-Namen (`localhost`,
+`localhost6`, `ip6-localhost`) und Reverse-DNS-Namen (`…in-addr.arpa`,
+`…ip6.arpa`) werden übersprungen — die benennen die Maschine sich selbst
+gegenüber, nicht gegenüber Zabbix. Ein Kurzname bekommt `domain` angehängt wie
+jedes andere Ziel. Bleibt nichts Brauchbares übrig, sagt `snooze` das, statt zu
+raten.
+
 - **Hosts**: Namen ohne Punkt werden automatisch um `.domain.tld` ergänzt
   (z. B. `prd-mail-5` wird zu `prd-mail-5.domain.tld`). Namen mit Punkt bleiben unverändert.
 - **Glob**: Hostnamen dürfen `*`, `?` und `[…]` enthalten und werden gegen die
